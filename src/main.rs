@@ -2,6 +2,7 @@
 extern crate num_enum;
 
 mod attack_table;
+#[macro_use]
 mod bitboard;
 mod core;
 
@@ -27,9 +28,11 @@ impl PieceBitBoards {
 
 fn main() {
     let attacks = AttackTable::new();
-    for square in 0..Square::NUM {
-        for piece in 0..Piece::NUM {
-            println!("{}", attacks.get(piece, square).repr_string());
-        }
+    for square in Square::all() {
+        let blockers: BitBoard = 0xffff000000000000;
+        println!(
+            "{}",
+            attacks.get(Piece::Queen, square, blockers).repr_string()
+        );
     }
 }

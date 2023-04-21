@@ -1,8 +1,10 @@
 extern crate num_enum;
+use num_enum::UnsafeFromPrimitive;
 
 pub const NUM_FILES: usize = 8;
 pub const NUM_RANKS: usize = NUM_FILES;
 
+#[derive(Debug, Clone, Copy)]
 pub enum Color {
     White,
     Black,
@@ -13,7 +15,7 @@ impl Color {
 }
 
 #[repr(usize)]
-#[derive(num_enum::TryFromPrimitive)]
+#[derive(num_enum::UnsafeFromPrimitive, Debug, Clone, Copy)]
 pub enum Piece {
     King,
     Queen,
@@ -25,11 +27,17 @@ pub enum Piece {
 
 impl Piece {
     pub const NUM: usize = std::mem::variant_count::<Piece>();
+    pub fn index(index: usize) -> Self {
+        unsafe { Piece::unchecked_transmute_from(index) }
+    }
+    pub fn all() -> impl Iterator<Item = Piece> {
+        (0..Piece::NUM).map(|i| Self::index(i))
+    }
 }
 
 #[rustfmt::skip]
 #[repr(usize)]
-#[derive(num_enum::TryFromPrimitive)]
+#[derive(num_enum::UnsafeFromPrimitive, Debug, Clone, Copy)]
 pub enum Square {
     A1, B1, C1, D1, E1, F1, G1, H1,
     A2, B2, C2, D2, E2, F2, G2, H2,
@@ -43,4 +51,10 @@ pub enum Square {
 
 impl Square {
     pub const NUM: usize = std::mem::variant_count::<Square>();
+    pub fn index(index: usize) -> Self {
+        unsafe { Square::unchecked_transmute_from(index) }
+    }
+    pub fn all() -> impl Iterator<Item = Square> {
+        (0..Square::NUM).map(|i| Self::index(i))
+    }
 }

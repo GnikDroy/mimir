@@ -1,15 +1,60 @@
-use crate::attack_table::{AttackTable, ATTACK_TABLE};
+use crate::attack_table::ATTACK_TABLE;
 use crate::bitboard::{BitBoard, BitBoardMethods};
 use crate::board::GameState;
 use crate::core::*;
-pub struct MoveGenerator {
-    attacks: &'static AttackTable,
-}
+pub struct MoveGenerator {}
 
 impl MoveGenerator {
     pub fn new() -> Self {
-        MoveGenerator {
-            attacks: &ATTACK_TABLE,
+        MoveGenerator {}
+    }
+
+    pub fn perft(&self, state: &mut GameState, depth: u8) -> u64 {
+        if depth == 0 {
+            return 1;
+        }
+        let moves = self.generate_moves(state);
+        let mut count = 0u64;
+
+        for move_encoded in moves {
+            let undo_info = state.make_move(move_encoded);
+
+            // Only count moves where the moving side is not in check
+            if !state.is_in_check(state.side_to_move.opposite()) {
+                count += self.perft(state, depth - 1);
+            }
+
+            state.unmake_move(move_encoded, undo_info);
+        }
+
+        count
+    }
+
+    /// Test perft against known starting position values
+    pub fn test_perft() {
+        let gen = MoveGenerator::new();
+        let mut state = GameState::starting_position();
+
+        let expected_perft = [20, 400, 8902, 197281, 4865609, 119060324, 3195901860];
+
+        for (depth, perft_count) in expected_perft.iter().enumerate() {
+            let start_time = std::time::Instant::now();
+            let count = gen.perft(&mut state, depth as u8 + 1);
+            let elapsed = start_time.elapsed();
+            println!(
+                "Depth {}: {} nodes (calculated in {:.2?})",
+                depth + 1,
+                count,
+                elapsed
+            );
+            assert_eq!(
+                count,
+                *perft_count,
+                "Perft count mismatch at depth {}: expected {}, got {}",
+                depth + 1,
+                perft_count,
+                count
+            );
         }
     }
 
@@ -26,23 +71,23 @@ impl MoveGenerator {
                 match piece {
                     Piece::Pawn => self.add_pawn_moves(state, from, &mut moves),
                     Piece::King => {
-                        let attacks = self.attacks.get_king(from);
+                        let attacks = ATTACK_TABLE.get_king(from);
                         self.add_attack_moves(from, attacks & !friendly, &enemy, &mut moves);
                     }
                     Piece::Knight => {
-                        let attacks = self.attacks.get_knight(from);
+                        let attacks = ATTACK_TABLE.get_knight(from);
                         self.add_attack_moves(from, attacks & !friendly, &enemy, &mut moves);
                     }
                     Piece::Bishop => {
-                        let attacks = self.attacks.get_bishop(from, occupancy);
+                        let attacks = ATTACK_TABLE.get_bishop(from, occupancy);
                         self.add_attack_moves(from, attacks & !friendly, &enemy, &mut moves);
                     }
                     Piece::Rook => {
-                        let attacks = self.attacks.get_rook(from, occupancy);
+                        let attacks = ATTACK_TABLE.get_rook(from, occupancy);
                         self.add_attack_moves(from, attacks & !friendly, &enemy, &mut moves);
                     }
                     Piece::Queen => {
-                        let attacks = self.attacks.get_queen(from, occupancy);
+                        let attacks = ATTACK_TABLE.get_queen(from, occupancy);
                         self.add_attack_moves(from, attacks & !friendly, &enemy, &mut moves);
                     }
                 }
@@ -80,11 +125,11 @@ impl MoveGenerator {
             let board = attacker_boards[piece as usize];
             for from in board.iter() {
                 let attacks = match piece {
-                    Piece::Knight => self.attacks.get_knight(from),
-                    Piece::Bishop => self.attacks.get_bishop(from, state.occupancies[2]),
-                    Piece::Rook => self.attacks.get_rook(from, state.occupancies[2]),
-                    Piece::Queen => self.attacks.get_queen(from, state.occupancies[2]),
-                    Piece::King => self.attacks.get_king(from),
+                    Piece::Knight => ATTACK_TABLE.get_knight(from),
+                    Piece::Bishop => ATTACK_TABLE.get_bishop(from, state.occupancies[2]),
+                    Piece::Rook => ATTACK_TABLE.get_rook(from, state.occupancies[2]),
+                    Piece::Queen => ATTACK_TABLE.get_queen(from, state.occupancies[2]),
+                    Piece::King => ATTACK_TABLE.get_king(from),
                     _ => unreachable!(),
                 };
                 attacked |= attacks;
@@ -227,7 +272,7 @@ impl MoveGenerator {
         }
 
         // Captures
-        let attacks = self.attacks.get_pawn(from, color);
+        let attacks = ATTACK_TABLE.get_pawn(from, color);
         let captures = attacks & enemy;
         for to in captures.iter() {
             self.add_pawn_move(from, to, color, true, moves);
@@ -313,6 +358,28 @@ mod tests {
         MoveGenerator::new().generate_moves(&state)
     }
 
+    fn assert_state_eq(left: &GameState, right: &GameState) {
+        assert_eq!(left.pieces, right.pieces, "piece boards differ");
+        assert_eq!(left.occupancies, right.occupancies, "occupancies differ");
+        assert_eq!(
+            left.side_to_move, right.side_to_move,
+            "side to move differs"
+        );
+        assert_eq!(
+            left.castling_rights, right.castling_rights,
+            "castling rights differ"
+        );
+        assert_eq!(left.en_passant, right.en_passant, "en passant differs");
+        assert_eq!(
+            left.halfmove_clock, right.halfmove_clock,
+            "halfmove clock differs"
+        );
+        assert_eq!(
+            left.fullmove_number, right.fullmove_number,
+            "fullmove number differs"
+        );
+    }
+
     #[test]
     fn starting_position_generates_twenty_white_moves() {
         let state = GameState::starting_position();
@@ -392,5 +459,59 @@ mod tests {
         let moves = moves_for(state);
 
         assert!(!moves.contains(&Move::from_castle(Square::E1, Square::G1, true)));
+    }
+
+    #[test]
+    fn en_passant_make_and_unmake_restores_state() {
+        let mut state = empty_state();
+        state.side_to_move = Color::White;
+        state.en_passant = Some(Square::D6);
+
+        set_piece(&mut state, Color::White, Piece::King, Square::E1);
+        set_piece(&mut state, Color::Black, Piece::King, Square::E8);
+        set_piece(&mut state, Color::White, Piece::Pawn, Square::E5);
+        set_piece(&mut state, Color::Black, Piece::Pawn, Square::D5);
+
+        let before = state;
+        let mv = Move::from_capture(Square::E5, Square::D6, true);
+        let undo = state.make_move(mv);
+        state.unmake_move(mv, undo);
+
+        assert_state_eq(&state, &before);
+    }
+
+    #[test]
+    fn castling_make_and_unmake_restores_state() {
+        let mut state = empty_state();
+        state.side_to_move = Color::White;
+        state.castling_rights = 0b0001;
+
+        set_piece(&mut state, Color::White, Piece::King, Square::E1);
+        set_piece(&mut state, Color::White, Piece::Rook, Square::H1);
+        set_piece(&mut state, Color::Black, Piece::King, Square::E8);
+
+        let before = state;
+        let mv = Move::from_castle(Square::E1, Square::G1, true);
+        let undo = state.make_move(mv);
+        state.unmake_move(mv, undo);
+
+        assert_state_eq(&state, &before);
+    }
+
+    #[test]
+    fn promotion_make_and_unmake_restores_state() {
+        let mut state = empty_state();
+        state.side_to_move = Color::White;
+
+        set_piece(&mut state, Color::White, Piece::King, Square::E1);
+        set_piece(&mut state, Color::Black, Piece::King, Square::E8);
+        set_piece(&mut state, Color::White, Piece::Pawn, Square::E7);
+
+        let before = state;
+        let mv = Move::from_promotion(Square::E7, Square::E8, PromotionPiece::Queen, false);
+        let undo = state.make_move(mv);
+        state.unmake_move(mv, undo);
+
+        assert_state_eq(&state, &before);
     }
 }

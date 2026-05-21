@@ -9,14 +9,8 @@ pub use bitboard::BitBoard;
 mod board;
 mod move_generator;
 
-use board::GameState;
 use move_generator::MoveGenerator;
 
 fn main() {
-    let state = GameState::starting_position();
-    let gen = MoveGenerator::new();
-
-    let moves = gen.generate_moves(&state);
-
-    println!("Starting position: {} pseudo-legal moves", moves.len());
+    MoveGenerator::test_perft();
 }

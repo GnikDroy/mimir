@@ -4,6 +4,10 @@ pub type BitBoard = u64;
 
 pub trait BitBoardMethods {
     const EMPTY: Self;
+    const FIRST_RANK: Self;
+    const LAST_RANK: Self;
+    const FIRST_FILE: Self;
+    const LAST_FILE: Self;
     fn repr_string(&self) -> String;
     fn on(square: Square) -> BitBoard;
     fn flip_ranks(self) -> Self;
@@ -20,12 +24,16 @@ pub trait BitBoardMethods {
 
 impl BitBoardMethods for BitBoard {
     const EMPTY: Self = 0;
+    const FIRST_RANK: Self = 0x00000000000000ff;
+    const LAST_RANK: Self = 0xff00000000000000;
+    const FIRST_FILE: Self = 0x0101010101010101;
+    const LAST_FILE: Self = 0x8080808080808080;
 
     fn repr_string(&self) -> String {
         let mut repr = String::new();
-        for rank in 0..NUM_RANKS {
-            for file in 0..NUM_FILES {
-                let idx = (NUM_RANKS - rank - 1) * NUM_FILES + file;
+        for rank in 0..Rank::NUM {
+            for file in 0..File::NUM {
+                let idx = (Rank::NUM - rank - 1) * File::NUM + file;
                 let piece = (self >> idx) & 1u64;
                 repr.push(if piece == 0 { '_' } else { '*' });
             }
@@ -56,33 +64,33 @@ impl BitBoardMethods for BitBoard {
     }
 
     fn shift_north(&self) -> BitBoard {
-        self << NUM_FILES
+        (self & !Self::LAST_RANK) << File::NUM
     }
     fn shift_south(&self) -> BitBoard {
-        self >> NUM_FILES
+        (self & !Self::FIRST_RANK) >> File::NUM
     }
     fn shift_east(&self) -> BitBoard {
-        self << 1
+        (self & !Self::LAST_FILE) << 1
     }
 
     fn shift_west(&self) -> BitBoard {
-        self >> 1
+        (self & !Self::FIRST_FILE) >> 1
     }
 
     fn shift_north_east(&self) -> BitBoard {
-        self << (NUM_FILES + 1)
+        (self & !Self::LAST_RANK & !Self::LAST_FILE) << (File::NUM + 1)
     }
 
     fn shift_north_west(&self) -> BitBoard {
-        self << (NUM_FILES - 1)
+        (self & !Self::LAST_RANK & !Self::FIRST_FILE) << (File::NUM - 1)
     }
 
     fn shift_south_east(&self) -> BitBoard {
-        self >> (NUM_FILES - 1)
+        (self & !Self::FIRST_RANK & !Self::LAST_FILE) >> (File::NUM - 1)
     }
 
     fn shift_south_west(&self) -> BitBoard {
-        self >> (NUM_FILES + 1)
+        (self & !Self::FIRST_RANK & !Self::FIRST_FILE) >> (File::NUM + 1)
     }
 }
 

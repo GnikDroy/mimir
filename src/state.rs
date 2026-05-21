@@ -5,9 +5,11 @@ use crate::core::*;
 #[derive(Debug, Clone, Copy)]
 pub struct UndoInfo {
     pub captured_piece: Option<Piece>,
+    pub moved_piece: Piece,
     pub en_passant_before: Option<Square>,
     pub castling_rights_before: u8,
     pub halfmove_clock_before: u8,
+    pub fullmove_number_before: u16,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -47,54 +49,63 @@ impl Default for GameState {
 }
 
 impl GameState {
-    pub fn get_attacked_squares(&self, attacker: Color) -> BitBoard {
-        let mut attacked = BitBoard::EMPTY;
+    #[inline(always)]
+    pub fn is_square_attacked(&self, sq: Square, attacker: Color) -> bool {
+        let occ = self.occupancies[2];
+        let enemy = &self.pieces[attacker as usize];
 
-        let attacker_boards = &self.pieces[attacker as usize];
-        let pawn_board = attacker_boards[Piece::Pawn as usize];
-        // It is faster to compute for all pawns at once instead of using attack table.
-        // This includes en passant squares, since they are attacked by pawns as well.
-        let pawn_attacks = match attacker {
-            Color::White => pawn_board.shift_north_east() | pawn_board.shift_north_west(),
-            Color::Black => pawn_board.shift_south_east() | pawn_board.shift_south_west(),
-        };
-        attacked |= pawn_attacks;
+        let sq_bb = BitBoard::on(sq);
 
-        for piece in [
-            Piece::Knight,
-            Piece::Bishop,
-            Piece::Rook,
-            Piece::Queen,
-            Piece::King,
-        ] {
-            let board = attacker_boards[piece as usize];
-            for from in board.iter() {
-                let attacks = match piece {
-                    Piece::Knight => ATTACK_TABLE.get_knight(from),
-                    Piece::Bishop => ATTACK_TABLE.get_bishop(from, self.occupancies[2]),
-                    Piece::Rook => ATTACK_TABLE.get_rook(from, self.occupancies[2]),
-                    Piece::Queen => ATTACK_TABLE.get_queen(from, self.occupancies[2]),
-                    Piece::King => ATTACK_TABLE.get_king(from),
-                    _ => unreachable!(),
-                };
-                attacked |= attacks;
-            }
+        let rook_attackers = enemy[Piece::Rook as usize] | enemy[Piece::Queen as usize];
+        if (ATTACK_TABLE.get_rook(sq, occ) & rook_attackers) != 0 {
+            return true;
         }
 
-        attacked
+        let bishop_attackers = enemy[Piece::Bishop as usize] | enemy[Piece::Queen as usize];
+        if (ATTACK_TABLE.get_bishop(sq, occ) & bishop_attackers) != 0 {
+            return true;
+        }
+
+        if (ATTACK_TABLE.get_knight(sq) & enemy[Piece::Knight as usize]) != 0 {
+            return true;
+        }
+
+        let pawn_attackers = match attacker {
+            Color::White => sq_bb.shift_south_east() | sq_bb.shift_south_west(),
+            Color::Black => sq_bb.shift_north_east() | sq_bb.shift_north_west(),
+        };
+
+        if (pawn_attackers & enemy[Piece::Pawn as usize]) != 0 {
+            return true;
+        }
+        if (ATTACK_TABLE.get_king(sq) & enemy[Piece::King as usize]) != 0 {
+            return true;
+        }
+
+        false
     }
 
+    #[inline(always)]
     pub fn is_in_check(&self, color: Color) -> bool {
-        let king_board = self.pieces[color as usize][Piece::King as usize];
-        let enemy_attacks = self.get_attacked_squares(color.opposite());
-        (king_board & enemy_attacks) != BitBoard::EMPTY
+        let enemy = color.opposite();
+        let king_bb = self.pieces[color as usize][Piece::King as usize];
+        self.is_square_attacked(Square::index(king_bb.trailing_zeros() as u8), enemy)
+    }
+
+    #[inline(always)]
+    pub fn is_checkmate(&mut self) -> bool {
+        if !self.is_in_check(self.side_to_move) {
+            return false;
+        }
+        let mut moves = Vec::with_capacity(256);
+        self.generate_valid_moves(&mut moves);
+        moves.is_empty()
     }
 
     /// Make a move on the board and return undo information (does not validate legality)
-    pub fn make_move(&mut self, move_encoded: u16) -> UndoInfo {
+    pub fn make_move(&mut self, move_encoded: Move) -> UndoInfo {
         let from = move_encoded.get_from();
         let to = move_encoded.get_to();
-        let move_type = move_encoded.get_type();
 
         let from_board = BitBoard::on(from);
         let to_board = BitBoard::on(to);
@@ -106,89 +117,43 @@ impl GameState {
         let en_passant_before = self.en_passant;
         let castling_rights_before = self.castling_rights;
         let halfmove_clock_before = self.halfmove_clock;
+        let fullmove_number_before = self.fullmove_number;
 
         // Find the moving piece
-        let moving_piece = Piece::all()
-            .find(|&p| (self.pieces[moving_color as usize][p as usize] & from_board) != 0)
-            .expect("No piece at from square");
+        let moving_piece = move_encoded.get_moved_piece();
 
         // Remove piece from source
         self.pieces[moving_color as usize][moving_piece as usize] &= !from_board;
         self.occupancies[moving_color as usize] &= !from_board;
 
-        // Track captured piece
-        let mut captured_piece = None;
+        // Place piece at destination
+        if move_encoded.is_promotion() {
+            let piece = move_encoded.get_promotion_piece().unwrap().to_piece();
+            self.pieces[moving_color as usize][piece as usize] |= to_board;
+            self.occupancies[moving_color as usize] |= to_board;
+        } else {
+            self.pieces[moving_color as usize][moving_piece as usize] |= to_board;
+            self.occupancies[moving_color as usize] |= to_board;
+        }
+
+        let captured_piece = move_encoded.get_captured_piece();
 
         // Handle captures
-        if let MoveType::Capture { .. } = move_type {
-            for piece in Piece::all() {
-                if (self.pieces[enemy_color as usize][piece as usize] & to_board) != 0 {
-                    captured_piece = Some(piece);
-                    self.pieces[enemy_color as usize][piece as usize] &= !to_board;
-                    self.occupancies[enemy_color as usize] &= !to_board;
-                    break;
-                }
-            }
+        if let Some(_) = captured_piece {
+            self.pieces[enemy_color as usize][captured_piece.unwrap() as usize] &= !to_board;
+            self.occupancies[enemy_color as usize] &= !to_board;
         }
 
         // Handle en passant captures
-        if let MoveType::Capture { enpassant: true } = move_type {
+        if move_encoded.is_enpassant() {
             let capture_square = match moving_color {
-                Color::White => Square::index(to as usize - 8),
-                Color::Black => Square::index(to as usize + 8),
+                Color::White => Square::index(to as u8 - 8),
+                Color::Black => Square::index(to as u8 + 8),
             };
             let capture_board = BitBoard::on(capture_square);
             self.pieces[enemy_color as usize][Piece::Pawn as usize] &= !capture_board;
             self.occupancies[enemy_color as usize] &= !capture_board;
-            captured_piece = Some(Piece::Pawn);
         }
-
-        // Place piece at destination
-        match move_type {
-            MoveType::Promotion { piece, is_capture } => {
-                if is_capture {
-                    for piece in Piece::all() {
-                        if (self.pieces[enemy_color as usize][piece as usize] & to_board) != 0 {
-                            captured_piece = Some(piece);
-                            self.pieces[enemy_color as usize][piece as usize] &= !to_board;
-                            self.occupancies[enemy_color as usize] &= !to_board;
-                            break;
-                        }
-                    }
-                }
-                let piece = match piece {
-                    PromotionPiece::Knight => Piece::Knight,
-                    PromotionPiece::Bishop => Piece::Bishop,
-                    PromotionPiece::Rook => Piece::Rook,
-                    PromotionPiece::Queen => Piece::Queen,
-                };
-                self.pieces[moving_color as usize][piece as usize] |= to_board;
-                self.occupancies[moving_color as usize] |= to_board;
-            }
-            _ => {
-                self.pieces[moving_color as usize][moving_piece as usize] |= to_board;
-                self.occupancies[moving_color as usize] |= to_board;
-            }
-        }
-
-        // Handle castling
-        if let MoveType::Castle { kingside } = move_type {
-            let (rook_from, rook_to) = match (moving_color, kingside) {
-                (Color::White, true) => (Square::H1, Square::F1),
-                (Color::White, false) => (Square::A1, Square::D1),
-                (Color::Black, true) => (Square::H8, Square::F8),
-                (Color::Black, false) => (Square::A8, Square::D8),
-            };
-            let rook_from_board = BitBoard::on(rook_from);
-            let rook_to_board = BitBoard::on(rook_to);
-            self.pieces[moving_color as usize][Piece::Rook as usize] &= !rook_from_board;
-            self.pieces[moving_color as usize][Piece::Rook as usize] |= rook_to_board;
-            self.occupancies[moving_color as usize] &= !rook_from_board;
-            self.occupancies[moving_color as usize] |= rook_to_board;
-        }
-
-        self.occupancies[2] =
-            self.occupancies[moving_color as usize] | self.occupancies[enemy_color as usize];
 
         // Update castling rights
         if moving_piece == Piece::King {
@@ -219,31 +184,62 @@ impl GameState {
         }
 
         // Update en passant
-        self.en_passant = if let MoveType::DoublePawnPush = move_type {
+        self.en_passant = if move_encoded.is_double_pawn_push() {
             let ep_square = match moving_color {
-                Color::White => Square::index(to as usize - 8),
-                Color::Black => Square::index(to as usize + 8),
+                Color::White => Square::index(to as u8 - 8),
+                Color::Black => Square::index(to as u8 + 8),
             };
             Some(ep_square)
         } else {
             None
         };
 
+        // Handle castling
+        if move_encoded.is_castle() {
+            let kingside = move_encoded.is_kingside_castle();
+            let (rook_from, rook_to) = match (moving_color, kingside) {
+                (Color::White, true) => (Square::H1, Square::F1),
+                (Color::White, false) => (Square::A1, Square::D1),
+                (Color::Black, true) => (Square::H8, Square::F8),
+                (Color::Black, false) => (Square::A8, Square::D8),
+            };
+            let rook_from_board = BitBoard::on(rook_from);
+            let rook_to_board = BitBoard::on(rook_to);
+            self.pieces[moving_color as usize][Piece::Rook as usize] &= !rook_from_board;
+            self.pieces[moving_color as usize][Piece::Rook as usize] |= rook_to_board;
+            self.occupancies[moving_color as usize] &= !rook_from_board;
+            self.occupancies[moving_color as usize] |= rook_to_board;
+        }
+
+        self.occupancies[2] =
+            self.occupancies[moving_color as usize] | self.occupancies[enemy_color as usize];
+
         // Toggle side to move
         self.side_to_move = enemy_color;
 
+        if self.side_to_move == Color::White {
+            self.fullmove_number += 1;
+        }
+
+        self.halfmove_clock += if moving_piece == Piece::Pawn || move_encoded.is_capture() {
+            0
+        } else {
+            1
+        };
+
         UndoInfo {
             captured_piece,
+            moved_piece: moving_piece,
             en_passant_before,
             castling_rights_before,
             halfmove_clock_before,
+            fullmove_number_before,
         }
     }
 
-    pub fn unmake_move(&mut self, move_encoded: u16, undo_info: UndoInfo) {
+    pub fn unmake_move(&mut self, move_encoded: Move, undo_info: &UndoInfo) {
         let from = move_encoded.get_from();
         let to = move_encoded.get_to();
-        let move_type = move_encoded.get_type();
 
         // Restore side to move first (so we identify the moving side correctly)
         self.side_to_move = self.side_to_move.opposite();
@@ -256,47 +252,38 @@ impl GameState {
 
         // Remove piece from destination and restore pawn at source for promotions
         // Or for regular moves, just find and move the piece back
-        match move_type {
-            MoveType::Promotion { piece, .. } => {
-                let piece = match piece {
-                    PromotionPiece::Knight => Piece::Knight,
-                    PromotionPiece::Bishop => Piece::Bishop,
-                    PromotionPiece::Rook => Piece::Rook,
-                    PromotionPiece::Queen => Piece::Queen,
-                };
-                self.pieces[moving_color as usize][piece as usize] &= !to_board;
-                self.pieces[moving_color as usize][Piece::Pawn as usize] |= from_board;
-                self.occupancies[moving_color as usize] &= !to_board;
-                self.occupancies[moving_color as usize] |= from_board;
-            }
-            _ => {
-                let moving_piece = Piece::all()
-                    .find(|&p| (self.pieces[moving_color as usize][p as usize] & to_board) != 0)
-                    .expect("No piece at to square");
-                self.pieces[moving_color as usize][moving_piece as usize] &= !to_board;
-                self.pieces[moving_color as usize][moving_piece as usize] |= from_board;
-                self.occupancies[moving_color as usize] &= !to_board;
-                self.occupancies[moving_color as usize] |= from_board;
-            }
+        if move_encoded.is_promotion() {
+            let piece = move_encoded.get_promotion_piece().unwrap().to_piece();
+            self.pieces[moving_color as usize][piece as usize] &= !to_board;
+            self.pieces[moving_color as usize][Piece::Pawn as usize] |= from_board;
+            self.occupancies[moving_color as usize] &= !to_board;
+            self.occupancies[moving_color as usize] |= from_board;
+        } else {
+            let moving_piece = undo_info.moved_piece;
+            self.pieces[moving_color as usize][moving_piece as usize] &= !to_board;
+            self.pieces[moving_color as usize][moving_piece as usize] |= from_board;
+            self.occupancies[moving_color as usize] &= !to_board;
+            self.occupancies[moving_color as usize] |= from_board;
         }
 
-        // Handle en passant restore
-        if let MoveType::Capture { enpassant: true } = move_type {
+        // Handle en passant & capture piece restore
+        if move_encoded.is_enpassant() {
             let capture_square = match moving_color {
-                Color::White => Square::index(to as usize - 8),
-                Color::Black => Square::index(to as usize + 8),
+                Color::White => Square::index(to as u8 - File::NUM as u8),
+                Color::Black => Square::index(to as u8 + File::NUM as u8),
             };
             let capture_board = BitBoard::on(capture_square);
             self.pieces[enemy_color as usize][Piece::Pawn as usize] |= capture_board;
             self.occupancies[enemy_color as usize] |= capture_board;
-        } else if let Some(captured) = undo_info.captured_piece {
+        } else if move_encoded.is_capture() {
+            let captured = undo_info.captured_piece.unwrap();
             self.pieces[enemy_color as usize][captured as usize] |= to_board;
             self.occupancies[enemy_color as usize] |= to_board;
         }
 
         // Handle castling unmake
-        if let MoveType::Castle { kingside } = move_type {
-            let (rook_from, rook_to) = match (moving_color, kingside) {
+        if move_encoded.is_castle() {
+            let (rook_from, rook_to) = match (moving_color, move_encoded.is_kingside_castle()) {
                 (Color::White, true) => (Square::H1, Square::F1),
                 (Color::White, false) => (Square::A1, Square::D1),
                 (Color::Black, true) => (Square::H8, Square::F8),
@@ -317,5 +304,6 @@ impl GameState {
         self.en_passant = undo_info.en_passant_before;
         self.castling_rights = undo_info.castling_rights_before;
         self.halfmove_clock = undo_info.halfmove_clock_before;
+        self.fullmove_number = undo_info.fullmove_number_before;
     }
 }

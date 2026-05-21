@@ -37,7 +37,7 @@ impl GameState {
                 }
                 _ => {
                     let square_index = rank * 8 + file;
-                    let square = Square::index(square_index);
+                    let square = Square::index(square_index as u8);
                     let (color, piece) = match ch {
                         'P' => (Color::White, Piece::Pawn),
                         'N' => (Color::White, Piece::Knight),

@@ -106,7 +106,7 @@ impl BitBoardMethods for BitBoard {
         if *self == 0 {
             return None;
         }
-        let idx = self.trailing_zeros() as usize;
+        let idx = self.trailing_zeros() as u8;
         *self &= *self - 1;
         Some(Square::index(idx))
     }
@@ -122,7 +122,7 @@ impl Iterator for BitBoardIterator {
         if self.bitboard == 0 {
             return None;
         }
-        let idx = self.bitboard.trailing_zeros() as usize;
+        let idx = self.bitboard.trailing_zeros() as u8;
         self.bitboard &= self.bitboard - 1; // pop LSB
         Some(Square::index(idx))
     }

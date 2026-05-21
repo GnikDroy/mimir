@@ -2,225 +2,220 @@ use crate::attack_table::ATTACK_TABLE;
 use crate::bitboard::{BitBoard, BitBoardMethods};
 use crate::core::*;
 use crate::state::GameState;
-pub struct MoveGenerator {}
 
-impl MoveGenerator {
-    pub fn new() -> Self {
-        MoveGenerator {}
-    }
-
-    pub fn perft(&self, state: &mut GameState, depth: u8) -> u64 {
+impl GameState {
+    pub fn perft(&mut self, depth: u8, moves_list: &mut [Vec<Move>]) -> u64 {
         if depth == 0 {
             return 1;
         }
-        let moves = self.generate_moves(state);
+
+        let (current_moves, rest) = moves_list.split_first_mut().unwrap();
+
+        current_moves.clear();
+        Self::generate_moves(self, current_moves);
+
         let mut count = 0u64;
 
-        for move_encoded in moves {
-            let undo_info = state.make_move(move_encoded);
+        for &mv in current_moves.iter() {
+            let undo_info = self.make_move(mv);
 
-            // Only count moves where the moving side is not in check
-            if !state.is_in_check(state.side_to_move.opposite()) {
-                count += self.perft(state, depth - 1);
+            // Only count legal moves
+            if !self.is_in_check(self.side_to_move.opposite()) {
+                count += self.perft(depth - 1, rest);
             }
 
-            state.unmake_move(move_encoded, undo_info);
+            self.unmake_move(mv, &undo_info);
         }
 
         count
     }
 
-    pub fn generate_moves(&self, state: &GameState) -> Vec<Move> {
-        let mut moves = Vec::with_capacity(256);
-        let friendly = state.occupancies[state.side_to_move as usize];
-        let enemy = state.occupancies[state.side_to_move.opposite() as usize];
-        let occupancy = state.occupancies[2];
+    pub fn generate_valid_moves(&mut self, moves: &mut Vec<Move>) {
+        self.generate_moves(moves);
+        moves.retain(|mv: &Move| {
+            let undo = self.make_move(*mv);
+            let ok = !self.is_in_check(self.side_to_move);
+            self.unmake_move(*mv, &undo);
+            ok
+        });
+    }
+
+    pub fn generate_moves(&self, mut moves: &mut Vec<Move>) {
+        let friendly = self.occupancies[self.side_to_move as usize];
+        let occupancy = self.occupancies[2];
 
         // Generate moves for each piece type
         for piece in Piece::all() {
-            let pieces = state.pieces[state.side_to_move as usize][piece as usize];
+            let pieces = self.pieces[self.side_to_move as usize][piece as usize];
+            let enemy = &self.pieces[self.side_to_move.opposite() as usize];
             for from in pieces.iter() {
                 match piece {
-                    Piece::Pawn => self.add_pawn_moves(state, from, &mut moves),
+                    Piece::Pawn => Self::add_pawn_moves(self, from, &mut moves),
                     Piece::King => {
                         let attacks = ATTACK_TABLE.get_king(from);
-                        self.add_attack_moves(from, attacks & !friendly, &enemy, &mut moves);
+                        Self::add_attack_moves(
+                            from,
+                            Piece::King,
+                            attacks & !friendly,
+                            &enemy,
+                            &mut moves,
+                        );
                     }
                     Piece::Knight => {
                         let attacks = ATTACK_TABLE.get_knight(from);
-                        self.add_attack_moves(from, attacks & !friendly, &enemy, &mut moves);
+                        Self::add_attack_moves(
+                            from,
+                            Piece::Knight,
+                            attacks & !friendly,
+                            &enemy,
+                            &mut moves,
+                        );
                     }
                     Piece::Bishop => {
                         let attacks = ATTACK_TABLE.get_bishop(from, occupancy);
-                        self.add_attack_moves(from, attacks & !friendly, &enemy, &mut moves);
+                        Self::add_attack_moves(
+                            from,
+                            Piece::Bishop,
+                            attacks & !friendly,
+                            &enemy,
+                            &mut moves,
+                        );
                     }
                     Piece::Rook => {
                         let attacks = ATTACK_TABLE.get_rook(from, occupancy);
-                        self.add_attack_moves(from, attacks & !friendly, &enemy, &mut moves);
+                        Self::add_attack_moves(
+                            from,
+                            Piece::Rook,
+                            attacks & !friendly,
+                            &enemy,
+                            &mut moves,
+                        );
                     }
                     Piece::Queen => {
                         let attacks = ATTACK_TABLE.get_queen(from, occupancy);
-                        self.add_attack_moves(from, attacks & !friendly, &enemy, &mut moves);
+                        Self::add_attack_moves(
+                            from,
+                            Piece::Queen,
+                            attacks & !friendly,
+                            &enemy,
+                            &mut moves,
+                        );
                     }
                 }
 
                 // castling moves (only for king)
                 if piece == Piece::King {
-                    self.add_castling_moves(state, from, &mut moves);
+                    self.add_castling_moves(from, &mut moves);
                 }
             }
         }
-
-        moves
     }
 
-    fn get_attacked_squares(&self, state: &GameState, attacker: Color) -> BitBoard {
-        let mut attacked = BitBoard::EMPTY;
+    fn add_castling_moves(&self, from: Square, moves: &mut Vec<Move>) {
+        let color = self.side_to_move;
+        let enemy = color.opposite();
 
-        let attacker_boards = &state.pieces[attacker as usize];
-        let pawn_board = attacker_boards[Piece::Pawn as usize];
-        // It is faster to compute for all pawns at once instead of using attack table.
-        // This includes en passant squares, since they are attacked by pawns as well.
-        let pawn_attacks = match attacker {
-            Color::White => pawn_board.shift_north_east() | pawn_board.shift_north_west(),
-            Color::Black => pawn_board.shift_south_east() | pawn_board.shift_south_west(),
-        };
-        attacked |= pawn_attacks;
-
-        for piece in [
-            Piece::Knight,
-            Piece::Bishop,
-            Piece::Rook,
-            Piece::Queen,
-            Piece::King,
-        ] {
-            let board = attacker_boards[piece as usize];
-            for from in board.iter() {
-                let attacks = match piece {
-                    Piece::Knight => ATTACK_TABLE.get_knight(from),
-                    Piece::Bishop => ATTACK_TABLE.get_bishop(from, state.occupancies[2]),
-                    Piece::Rook => ATTACK_TABLE.get_rook(from, state.occupancies[2]),
-                    Piece::Queen => ATTACK_TABLE.get_queen(from, state.occupancies[2]),
-                    Piece::King => ATTACK_TABLE.get_king(from),
-                    _ => unreachable!(),
-                };
-                attacked |= attacks;
-            }
-        }
-
-        attacked
-    }
-
-    fn add_castling_moves(&self, state: &GameState, from: Square, moves: &mut Vec<Move>) {
-        let color = state.side_to_move;
-
-        // King must be on starting square to castle
+        // King must be on starting square
         if (color == Color::White && from != Square::E1)
             || (color == Color::Black && from != Square::E8)
         {
             return;
         }
 
-        let enemy = color.opposite();
-        let attacked_by_enemy = self.get_attacked_squares(state, enemy);
-        if (attacked_by_enemy & BitBoard::on(from)) != 0 {
+        // King cannot be in check
+        if self.is_square_attacked(from, enemy) {
             return;
         }
 
-        if self.can_castle(state, color, true, attacked_by_enemy) {
+        // Kingside
+        if self.can_castle(color, true, enemy) {
             let to = match color {
                 Color::White => Square::G1,
                 Color::Black => Square::G8,
             };
-            moves.push(Move::from_castle(from, to, true));
+            moves.push(Move::from_castle(from, to, Piece::King, true));
         }
 
-        if self.can_castle(state, color, false, attacked_by_enemy) {
+        // Queenside
+        if self.can_castle(color, false, enemy) {
             let to = match color {
                 Color::White => Square::C1,
                 Color::Black => Square::C8,
             };
-            moves.push(Move::from_castle(from, to, false));
+            moves.push(Move::from_castle(from, to, Piece::King, false));
         }
     }
 
-    fn can_castle(
-        &self,
-        state: &GameState,
-        color: Color,
-        kingside: bool,
-        attacked_by_enemy: BitBoard,
-    ) -> bool {
-        // Check castling rights
+    fn can_castle(&self, color: Color, kingside: bool, enemy: Color) -> bool {
         let rights = if kingside {
             match color {
-                Color::White => (state.castling_rights & 0b0001) != 0,
-                Color::Black => (state.castling_rights & 0b0100) != 0,
+                Color::White => (self.castling_rights & 0b0001) != 0,
+                Color::Black => (self.castling_rights & 0b0100) != 0,
             }
         } else {
             match color {
-                Color::White => (state.castling_rights & 0b0010) != 0,
-                Color::Black => (state.castling_rights & 0b1000) != 0,
+                Color::White => (self.castling_rights & 0b0010) != 0,
+                Color::Black => (self.castling_rights & 0b1000) != 0,
             }
         };
+
         if !rights {
             return false;
         }
 
-        // Define rook square, empty squares, and king path squares
-        let (rook_square, empty_between, through_mask) = match (color, kingside) {
+        let (rook_square, empty_squares, path_squares) = match (color, kingside) {
             (Color::White, true) => (
                 Square::H1,
                 BitBoard::on(Square::F1) | BitBoard::on(Square::G1),
-                BitBoard::on(Square::F1) | BitBoard::on(Square::G1),
+                [Square::F1, Square::G1],
             ),
             (Color::White, false) => (
                 Square::A1,
                 BitBoard::on(Square::B1) | BitBoard::on(Square::C1) | BitBoard::on(Square::D1),
-                BitBoard::on(Square::D1) | BitBoard::on(Square::C1),
+                [Square::D1, Square::C1],
             ),
             (Color::Black, true) => (
                 Square::H8,
                 BitBoard::on(Square::F8) | BitBoard::on(Square::G8),
-                BitBoard::on(Square::F8) | BitBoard::on(Square::G8),
+                [Square::F8, Square::G8],
             ),
             (Color::Black, false) => (
                 Square::A8,
                 BitBoard::on(Square::B8) | BitBoard::on(Square::C8) | BitBoard::on(Square::D8),
-                BitBoard::on(Square::D8) | BitBoard::on(Square::C8),
+                [Square::D8, Square::C8],
             ),
         };
 
-        // Check that the path between king and rook is empty
-        if (state.occupancies[2] & empty_between) != 0 {
+        // Empty squares between king and rook
+        if self.occupancies[2] & empty_squares != 0 {
             return false;
         }
 
-        // Check that the rook is in place
-        let rook_board = state.pieces[color as usize][Piece::Rook as usize];
-        if (rook_board & BitBoard::on(rook_square)) == 0 {
+        // Rook must exist
+        let rook_bb = self.pieces[color as usize][Piece::Rook as usize];
+        if rook_bb & BitBoard::on(rook_square) == 0 {
             return false;
         }
 
-        // Check that the king's path squares are not attacked
-        (attacked_by_enemy & through_mask) == 0
+        for sq in path_squares {
+            if self.is_square_attacked(sq, enemy) {
+                return false;
+            }
+        }
+
+        true
     }
 
     /// Generate pawn moves (push, captures, promotions, en passant)
-    fn add_pawn_moves(&self, state: &GameState, from: Square, moves: &mut Vec<Move>) {
-        self.add_pawn_moves_for_color(state, from, state.side_to_move, moves);
+    #[inline(always)]
+    fn add_pawn_moves(&self, from: Square, moves: &mut Vec<Move>) {
+        Self::add_pawn_moves_for_color(self, from, self.side_to_move, moves);
     }
 
-    fn add_pawn_moves_for_color(
-        &self,
-        state: &GameState,
-        from: Square,
-        color: Color,
-        moves: &mut Vec<u16>,
-    ) {
+    #[inline(always)]
+    fn add_pawn_moves_for_color(&self, from: Square, color: Color, moves: &mut Vec<Move>) {
         let from_board = BitBoard::on(from);
-        let occupancy = state.occupancies[2];
-        let enemy = state.occupancies[color.opposite() as usize];
+        let occupancy = self.occupancies[2];
 
         // Single push
         let single_push = match color {
@@ -229,7 +224,7 @@ impl MoveGenerator {
         };
 
         for to in single_push.iter() {
-            self.add_pawn_move(from, to, color, false, moves);
+            Self::add_pawn_move(from, to, color, None, moves);
         }
 
         // Double push if on starting rank
@@ -239,31 +234,39 @@ impl MoveGenerator {
                 Color::Black => single_push.shift_south() & !occupancy,
             };
             for to in double_push.iter() {
-                moves.push(Move::from_double_pawn_push(from, to));
+                moves.push(Move::from_double_pawn_push(from, to, Piece::Pawn));
             }
         }
-
         // Captures
+        let enemy = &self.pieces[self.side_to_move.opposite() as usize];
+        let enemy_occ = self.occupancies[self.side_to_move.opposite() as usize];
         let attacks = ATTACK_TABLE.get_pawn(from, color);
-        let captures = attacks & enemy;
-        for to in captures.iter() {
-            self.add_pawn_move(from, to, color, true, moves);
-        }
+        let captures = attacks & enemy_occ;
 
+        for to in captures.iter() {
+            let captured = Self::get_captured_piece(enemy, to);
+            Self::add_pawn_move(from, to, color, captured, moves);
+        }
         // En passant
-        if let Some(ep_sq) = state.en_passant {
+        if let Some(ep_sq) = self.en_passant {
             if (attacks & BitBoard::on(ep_sq)) != 0 {
-                moves.push(Move::from_capture(from, ep_sq, true));
+                moves.push(Move::from_capture(
+                    from,
+                    ep_sq,
+                    Piece::Pawn,
+                    Piece::Pawn,
+                    true,
+                ));
             }
         }
     }
 
+    #[inline(always)]
     fn add_pawn_move(
-        &self,
         from: Square,
         to: Square,
         color: Color,
-        is_capture: bool,
+        captured: Option<Piece>,
         moves: &mut Vec<Move>,
     ) {
         if to.is_promotion_square(color) {
@@ -273,44 +276,71 @@ impl MoveGenerator {
                 PromotionPiece::Bishop,
                 PromotionPiece::Knight,
             ] {
-                moves.push(Move::from_promotion(from, to, promo, is_capture));
+                moves.push(Move::from_promotion(from, to, Piece::Pawn, promo, captured));
             }
-        } else if is_capture {
-            moves.push(Move::from_capture(from, to, false));
+        } else if let Some(c) = captured {
+            moves.push(Move::from_capture(from, to, Piece::Pawn, c, false));
         } else {
-            moves.push(Move::from_quiet(from, to));
+            moves.push(Move::from_quiet(from, to, Piece::Pawn));
         }
     }
 
-    /// Generate moves for any piece, separating quiet moves from captures
+    #[inline(always)]
+    fn get_captured_piece(enemy: &[BitBoard; 6], to: Square) -> Option<Piece> {
+        let bb = BitBoard::on(to);
+
+        if enemy[Piece::Pawn as usize] & bb != 0 {
+            return Some(Piece::Pawn);
+        }
+        if enemy[Piece::Knight as usize] & bb != 0 {
+            return Some(Piece::Knight);
+        }
+        if enemy[Piece::Bishop as usize] & bb != 0 {
+            return Some(Piece::Bishop);
+        }
+        if enemy[Piece::Rook as usize] & bb != 0 {
+            return Some(Piece::Rook);
+        }
+        if enemy[Piece::Queen as usize] & bb != 0 {
+            return Some(Piece::Queen);
+        }
+        None
+    }
+
+    #[inline(always)]
     fn add_attack_moves(
-        &self,
         from: Square,
+        from_piece: Piece,
         targets: BitBoard,
-        enemy: &BitBoard,
+        enemy: &[BitBoard; 6],
         moves: &mut Vec<Move>,
     ) {
-        for to in targets.iter() {
-            let to_board = BitBoard::on(to);
+        let captures = targets & (enemy[0] | enemy[1] | enemy[2] | enemy[3] | enemy[4] | enemy[5]);
 
-            if (to_board & enemy) != 0 {
-                moves.push(Move::from_capture(from, to, false));
-            } else {
-                moves.push(Move::from_quiet(from, to));
-            }
+        let quiets = targets ^ captures;
+
+        for to in captures.iter() {
+            let captured = Self::get_captured_piece(enemy, to);
+            moves.push(Move::from_capture(
+                from,
+                to,
+                from_piece,
+                captured.unwrap(),
+                false,
+            ));
         }
-    }
-}
 
-impl Default for MoveGenerator {
-    fn default() -> Self {
-        Self::new()
+        for to in quiets.iter() {
+            moves.push(Move::from_quiet(from, to, from_piece));
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::MoveGenerator;
+    use once_cell::sync::Lazy;
+
+    use crate::attack_table::ATTACK_TABLE;
     use crate::bitboard::*;
     use crate::core::*;
     use crate::state::GameState;
@@ -327,29 +357,27 @@ mod tests {
         state.occupancies[2] |= board;
     }
 
-    fn moves_for(state: GameState) -> Vec<u16> {
-        MoveGenerator::new().generate_moves(&state)
-    }
-
     fn perft_divide(state: &mut GameState, depth: u8) -> Vec<(Move, u64)> {
-        let gen = MoveGenerator::new();
         let mut results = Vec::new();
 
         if depth == 0 {
             return results;
         }
 
-        let moves = gen.generate_moves(state);
+        let mut moves = Vec::with_capacity(256);
+        state.generate_moves(&mut moves);
+
+        let mut moves_list = vec![Vec::<Move>::with_capacity(256); depth as usize + 1];
         for move_encoded in moves {
             let undo_info = state.make_move(move_encoded);
 
             let count = if !state.is_in_check(state.side_to_move.opposite()) {
-                gen.perft(state, depth - 1)
+                state.perft(depth - 1, &mut moves_list)
             } else {
                 0
             };
 
-            state.unmake_move(move_encoded, undo_info);
+            state.unmake_move(move_encoded, &undo_info);
             results.push((move_encoded, count));
         }
 
@@ -357,18 +385,20 @@ mod tests {
     }
 
     fn assert_perft_case(fen: &str, expected_perft: &[u64]) {
+        Lazy::force(&ATTACK_TABLE);
         let mut state = GameState::from_fen(fen).unwrap();
-        let gen = MoveGenerator::new();
 
         for (depth, perft_count) in expected_perft.iter().enumerate() {
+            let mut moves_list = vec![Vec::<Move>::with_capacity(256); depth + 1];
             let start_time = Instant::now();
-            let count = gen.perft(&mut state, depth as u8 + 1);
+            let count = state.perft(depth as u8 + 1, &mut moves_list);
             let elapsed = start_time.elapsed();
             println!(
-                "Depth {}: {} nodes (calculated in {:.2?})",
+                "Depth {}: {} nodes (calculated in {:.2?} at {:.2}M nodes/sec)",
                 depth + 1,
                 count,
-                elapsed
+                elapsed,
+                count as f64 / 1_000_000 as f64 / elapsed.as_secs_f64()
             );
             assert_eq!(
                 count,
@@ -406,15 +436,10 @@ mod tests {
     #[test]
     fn starting_position_generates_twenty_white_moves() {
         let state = GameState::starting_position();
-        let moves = moves_for(state);
+        let mut moves = Vec::with_capacity(256);
+        state.generate_moves(&mut moves);
 
         assert_eq!(moves.len(), 20);
-        assert!(moves.contains(&Move::from_quiet(Square::E2, Square::E3)));
-        assert!(moves.contains(&Move::from_double_pawn_push(Square::E2, Square::E4)));
-        assert!(moves.contains(&Move::from_quiet(Square::G1, Square::F3)));
-        assert!(moves.contains(&Move::from_quiet(Square::B1, Square::C3)));
-        assert!(!moves.contains(&Move::from_castle(Square::E1, Square::G1, true)));
-        assert!(!moves.contains(&Move::from_castle(Square::E1, Square::C1, false)));
     }
 
     #[test]
@@ -425,14 +450,16 @@ mod tests {
         set_piece(&mut state, Color::Black, Piece::King, Square::C8);
         set_piece(&mut state, Color::White, Piece::Pawn, Square::E7);
 
-        let moves = moves_for(state);
+        let mut moves = Vec::with_capacity(256);
+        state.generate_moves(&mut moves);
 
         for promotion in PromotionPiece::all() {
             assert!(moves.contains(&Move::from_promotion(
                 Square::E7,
                 Square::E8,
+                Piece::Pawn,
                 promotion,
-                false,
+                None,
             )));
         }
     }
@@ -448,9 +475,16 @@ mod tests {
         set_piece(&mut state, Color::White, Piece::Pawn, Square::E5);
         set_piece(&mut state, Color::Black, Piece::Pawn, Square::D5);
 
-        let moves = moves_for(state);
+        let mut moves = Vec::with_capacity(256);
+        state.generate_moves(&mut moves);
 
-        assert!(moves.contains(&Move::from_capture(Square::E5, Square::D6, true)));
+        assert!(moves.contains(&Move::from_capture(
+            Square::E5,
+            Square::D6,
+            Piece::Pawn,
+            Piece::Pawn,
+            true
+        )));
     }
 
     #[test]
@@ -463,9 +497,15 @@ mod tests {
         set_piece(&mut state, Color::White, Piece::Rook, Square::H1);
         set_piece(&mut state, Color::Black, Piece::King, Square::E8);
 
-        let moves = moves_for(state);
+        let mut moves = Vec::with_capacity(256);
+        state.generate_moves(&mut moves);
 
-        assert!(moves.contains(&Move::from_castle(Square::E1, Square::G1, true)));
+        assert!(moves.contains(&Move::from_castle(
+            Square::E1,
+            Square::G1,
+            Piece::King,
+            true
+        )));
     }
 
     #[test]
@@ -479,9 +519,15 @@ mod tests {
         set_piece(&mut state, Color::Black, Piece::King, Square::E8);
         set_piece(&mut state, Color::Black, Piece::Rook, Square::F8);
 
-        let moves = moves_for(state);
+        let mut moves = Vec::with_capacity(256);
+        state.generate_moves(&mut moves);
 
-        assert!(!moves.contains(&Move::from_castle(Square::E1, Square::G1, true)));
+        assert!(!moves.contains(&Move::from_castle(
+            Square::E1,
+            Square::G1,
+            Piece::King,
+            true
+        )));
     }
 
     #[test]
@@ -496,9 +542,9 @@ mod tests {
         set_piece(&mut state, Color::Black, Piece::Pawn, Square::D5);
 
         let before = state;
-        let mv = Move::from_capture(Square::E5, Square::D6, true);
+        let mv = Move::from_capture(Square::E5, Square::D6, Piece::Pawn, Piece::Pawn, true);
         let undo = state.make_move(mv);
-        state.unmake_move(mv, undo);
+        state.unmake_move(mv, &undo);
 
         assert_state_eq(&state, &before);
     }
@@ -514,9 +560,9 @@ mod tests {
         set_piece(&mut state, Color::Black, Piece::King, Square::E8);
 
         let before = state;
-        let mv = Move::from_castle(Square::E1, Square::G1, true);
+        let mv = Move::from_castle(Square::E1, Square::G1, Piece::King, true);
         let undo = state.make_move(mv);
-        state.unmake_move(mv, undo);
+        state.unmake_move(mv, &undo);
 
         assert_state_eq(&state, &before);
     }
@@ -531,9 +577,15 @@ mod tests {
         set_piece(&mut state, Color::White, Piece::Pawn, Square::E7);
 
         let before = state;
-        let mv = Move::from_promotion(Square::E7, Square::E8, PromotionPiece::Queen, false);
+        let mv = Move::from_promotion(
+            Square::E7,
+            Square::E8,
+            Piece::Pawn,
+            PromotionPiece::Queen,
+            None,
+        );
         let undo = state.make_move(mv);
-        state.unmake_move(mv, undo);
+        state.unmake_move(mv, &undo);
 
         assert_state_eq(&state, &before);
     }

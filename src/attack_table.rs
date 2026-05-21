@@ -4,44 +4,6 @@ use rand::prelude::*;
 use crate::bitboard::*;
 use crate::core::*;
 
-#[derive(Debug, Clone, Copy)]
-struct Ray {
-    square: Square,
-    direction: (u8, u8),
-}
-
-impl Ray {
-    fn next(&self) -> Option<Ray> {
-        let (dx, dy) = self.direction;
-        let (file, rank) = self.square.coordinate();
-        let file = file as usize + dx as usize;
-        let rank = rank as usize + dy as usize;
-        if file > 0 && file < File::NUM && rank > 0 && rank < Rank::NUM {
-            let square = Square::from_coordinate(File::index(file), Rank::index(rank));
-            Some(Ray {
-                square,
-                direction: self.direction,
-            })
-        } else {
-            None
-        }
-    }
-
-    fn cast(&self) -> BitBoard {
-        let mut ray = self.clone();
-        let mut board = BitBoard::EMPTY;
-        loop {
-            if let Some(r) = ray.next() {
-                board = board | BitBoard::on(ray.square);
-                ray = r;
-            } else {
-                break;
-            }
-        }
-        board & !BitBoard::on(self.square)
-    }
-}
-
 #[derive(Debug, Default)]
 struct MagicEntry {
     mask: BitBoard,

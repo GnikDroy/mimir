@@ -24,7 +24,7 @@ impl Color {
     }
 }
 
-#[repr(usize)]
+#[repr(u8)]
 #[derive(num_enum::UnsafeFromPrimitive, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Piece {
     King,
@@ -37,11 +37,11 @@ pub enum Piece {
 
 impl Piece {
     pub const NUM: usize = std::mem::variant_count::<Piece>();
-    pub fn index(index: usize) -> Self {
+    pub fn index(index: u8) -> Self {
         unsafe { Piece::unchecked_transmute_from(index) }
     }
     pub fn all() -> impl Iterator<Item = Piece> {
-        (0..Piece::NUM).map(|i| Self::index(i))
+        (0..Piece::NUM).map(|i| Self::index(i as u8))
     }
 }
 
@@ -92,7 +92,7 @@ impl File {
 }
 
 #[rustfmt::skip]
-#[repr(usize)]
+#[repr(u8)]
 #[derive(num_enum::UnsafeFromPrimitive, Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(dead_code)]
 pub enum Square {
@@ -109,12 +109,12 @@ pub enum Square {
 impl Square {
     pub const NUM: usize = std::mem::variant_count::<Square>();
 
-    pub fn index(index: usize) -> Self {
-        unsafe { Square::unchecked_transmute_from(index) }
+    pub fn index(index: u8) -> Self {
+        unsafe { Square::unchecked_transmute_from(index as u8) }
     }
 
     pub fn all() -> impl Iterator<Item = Square> {
-        (0..Square::NUM).map(|i| Self::index(i))
+        (0..Square::NUM).map(|i| Self::index(i as u8))
     }
 
     pub fn coordinate(&self) -> (File, Rank) {
@@ -125,7 +125,7 @@ impl Square {
     }
 
     pub fn from_coordinate(file: File, rank: Rank) -> Self {
-        Self::index(rank as usize * File::NUM + file as usize)
+        Self::index(rank as u8 * File::NUM as u8 + file as u8)
     }
 
     pub fn from_algebraic(algebraic: &str) -> Option<Self> {
@@ -202,18 +202,33 @@ impl PromotionPiece {
     pub fn all() -> impl Iterator<Item = PromotionPiece> {
         (0..PromotionPiece::NUM).map(|i| Self::index(i as u8))
     }
+    pub fn to_piece(&self) -> Piece {
+        match self {
+            PromotionPiece::Queen => Piece::Queen,
+            PromotionPiece::Rook => Piece::Rook,
+            PromotionPiece::Bishop => Piece::Bishop,
+            PromotionPiece::Knight => Piece::Knight,
+        }
+    }
 }
 
-// Encode move as 16 bits: 6 bits for from square, 6 bits for to square
-// [0..5] bits for from square, [6..11] bits for to square, 12th bit for if promotion, 13th bit for if capture, [14..15] bits for special flags.
-// 1 bit for if capture, 1 bit for if promotion, 2 bits for special flags.
-// if capture but no promotion, special flags are used to detect en passant.
-// if capture and promotion, special flags are used to encode which piece the pawn promotes to.
-// if no capture and promotion, special flags are used to encode which piece the pawn promotes to.
-// if no capture and no promotion, special flags are used to encode double pawn push, and castling (kingside or queenside).
-pub type Move = u16;
+pub type Move = u32;
+
+/*
+32-bit move layout:
+0–5   from square        (6)
+6–11  to square          (6)
+12–14 moved piece        (3)
+15–17 captured piece     (3)
+18–20 promotion piece    (3)
+21    capture flag       (1)
+22    promotion flag     (1)
+23-24 special flags      (2)
+25–31 reserved
+*/
 
 pub enum MoveType {
+    Null,
     Quiet,
     DoublePawnPush,
     Castle {
@@ -229,125 +244,231 @@ pub enum MoveType {
 }
 pub trait MoveMethods {
     fn repr_string(&self) -> String;
-    fn from_quiet(from: Square, to: Square) -> Self;
-    fn from_double_pawn_push(from: Square, to: Square) -> Self;
-    fn from_castle(from: Square, to: Square, kingside: bool) -> Self;
-    fn from_capture(from: Square, to: Square, enpassant: bool) -> Self;
+
+    fn from_quiet(from: Square, to: Square, moved: Piece) -> Self;
+
+    fn from_double_pawn_push(from: Square, to: Square, moved: Piece) -> Self;
+
+    fn from_castle(from: Square, to: Square, moved: Piece, kingside: bool) -> Self;
+
+    fn from_capture(
+        from: Square,
+        to: Square,
+        moved: Piece,
+        captured: Piece,
+        enpassant: bool,
+    ) -> Self;
+
     fn from_promotion(
         from: Square,
         to: Square,
+        moved: Piece,
         promotion: PromotionPiece,
-        is_capture: bool,
+        captured: Option<Piece>,
     ) -> Self;
 
     fn get_from(&self) -> Square;
     fn get_to(&self) -> Square;
+
+    fn is_capture(&self) -> bool;
+    fn is_promotion(&self) -> bool;
+    fn is_quiet(&self) -> bool;
+    fn is_double_pawn_push(&self) -> bool;
+    fn is_enpassant(&self) -> bool;
+    fn is_castle(&self) -> bool;
+    fn is_kingside_castle(&self) -> bool;
+
+    fn get_moved_piece(&self) -> Piece;
+    fn get_captured_piece(&self) -> Option<Piece>;
+    fn get_promotion_piece(&self) -> Option<PromotionPiece>;
+
     fn get_type(&self) -> MoveType;
 }
 
 impl MoveMethods for Move {
+    #[inline(always)]
+    fn from_quiet(from: Square, to: Square, moved: Piece) -> Self {
+        (from as u32) | ((to as u32) << 6) | ((moved as u32) << 12)
+    }
+
+    #[inline(always)]
+    fn from_double_pawn_push(from: Square, to: Square, moved: Piece) -> Self {
+        let special = 1u32 << 23;
+        (from as u32) | ((to as u32) << 6) | ((moved as u32) << 12) | special
+    }
+
+    #[inline(always)]
+    fn from_castle(from: Square, to: Square, moved: Piece, kingside: bool) -> Self {
+        let special = if kingside { 2u32 << 23 } else { 3u32 << 23 };
+        (from as u32) | ((to as u32) << 6) | ((moved as u32) << 12) | special
+    }
+
+    #[inline(always)]
+    fn from_capture(
+        from: Square,
+        to: Square,
+        moved: Piece,
+        captured: Piece,
+        enpassant: bool,
+    ) -> Self {
+        let special = if enpassant { 1u32 << 23 } else { 0 };
+        (from as u32)
+            | ((to as u32) << 6)
+            | ((moved as u32) << 12)
+            | ((captured as u32) << 15)
+            | (1 << 21)
+            | special
+    }
+
+    #[inline(always)]
+    fn from_promotion(
+        from: Square,
+        to: Square,
+        moved: Piece,
+        promotion: PromotionPiece,
+        captured: Option<Piece>,
+    ) -> Self {
+        let mut m = (from as u32)
+            | ((to as u32) << 6)
+            | ((moved as u32) << 12)
+            | ((promotion as u32) << 18)
+            | (1 << 22);
+
+        if let Some(c) = captured {
+            m |= 1 << 21;
+            m |= (c as u32) << 15;
+        }
+
+        m
+    }
+
+    #[inline(always)]
+    fn get_from(&self) -> Square {
+        Square::index((self & 0b111111) as u8)
+    }
+
+    #[inline(always)]
+    fn get_to(&self) -> Square {
+        Square::index(((self >> 6) & 0b111111) as u8)
+    }
+
+    #[inline(always)]
+    fn is_capture(&self) -> bool {
+        (self & (1 << 21)) != 0
+    }
+
+    #[inline(always)]
+    fn is_promotion(&self) -> bool {
+        (self & (1 << 22)) != 0
+    }
+
+    #[inline(always)]
+    fn is_quiet(&self) -> bool {
+        ((self >> 21) & 0b1111) == 0
+    }
+
+    #[inline(always)]
+    fn is_double_pawn_push(&self) -> bool {
+        ((self >> 21) & 0b1111) == 0b0100
+    }
+
+    #[inline(always)]
+    fn is_enpassant(&self) -> bool {
+        ((self >> 21) & 0b1111) == 0b0101
+    }
+
+    fn is_castle(&self) -> bool {
+        ((self >> 23) & 0b11) >= 0b10
+    }
+
+    fn is_kingside_castle(&self) -> bool {
+        (self >> 23) & 0b11 == 0b10
+    }
+
+    #[inline(always)]
+    fn get_moved_piece(&self) -> Piece {
+        Piece::index(((self >> 12) & 0b111) as u8)
+    }
+
+    #[inline(always)]
+    fn get_captured_piece(&self) -> Option<Piece> {
+        if (self & (1 << 21)) == 0 {
+            return None;
+        }
+        Some(Piece::index(((self >> 15) & 0b111) as u8))
+    }
+
+    #[inline(always)]
+    fn get_promotion_piece(&self) -> Option<PromotionPiece> {
+        if (self & (1 << 22)) == 0 {
+            return None;
+        }
+        Some(PromotionPiece::index(((self >> 18) & 0b111) as u8))
+    }
+
+    #[inline(always)]
+    fn get_type(&self) -> MoveType {
+        let capture = (self & (1 << 21)) != 0;
+        let promo = (self & (1 << 22)) != 0;
+        let special = (self >> 23) & 0b11;
+
+        if promo {
+            return MoveType::Promotion {
+                piece: PromotionPiece::index(((self >> 18) & 0b111) as u8),
+                is_capture: capture,
+            };
+        }
+
+        if capture {
+            return MoveType::Capture {
+                enpassant: special == 0b01,
+            };
+        }
+
+        if special == 0b01 {
+            return MoveType::DoublePawnPush;
+        } else if special != 0 {
+            return MoveType::Castle {
+                kingside: special == 0b10,
+            };
+        }
+
+        MoveType::Quiet
+    }
+
     fn repr_string(&self) -> String {
         let from = self.get_from();
         let to = self.get_to();
-        let move_type = self.get_type();
 
-        let mut repr = format!("{:?}{:?}", from, to);
-        match move_type {
+        let mut s = format!("{:?}{:?}", from, to);
+
+        match self.get_type() {
+            MoveType::Null => s.push_str(" (null move)"),
             MoveType::Quiet => {}
-            MoveType::DoublePawnPush => repr.push_str(" (double pawn push)"),
+            MoveType::DoublePawnPush => s.push_str(" (double pawn push)"),
             MoveType::Castle { kingside } => {
                 if kingside {
-                    repr.push_str(" (kingside castle)");
+                    s.push_str(" (kingside castle)");
                 } else {
-                    repr.push_str(" (queenside castle)");
+                    s.push_str(" (queenside castle)");
                 }
             }
             MoveType::Capture { enpassant } => {
                 if enpassant {
-                    repr.push_str(" (en passant capture)");
+                    s.push_str(" (en passant capture)");
                 } else {
-                    repr.push_str(" (capture)");
+                    s.push_str(" (capture)");
                 }
             }
             MoveType::Promotion { piece, is_capture } => {
                 if is_capture {
-                    repr.push_str(&format!(" (capture and promote to {:?})", piece));
+                    s.push_str(&format!(" (capture promo to {:?})", piece));
                 } else {
-                    repr.push_str(&format!(" (promote to {:?})", piece));
+                    s.push_str(&format!(" (promo to {:?})", piece));
                 }
             }
         }
-        repr
-    }
-    fn from_quiet(from: Square, to: Square) -> Self {
-        let from_bits = (from as u16) & 0b111111; // 6 bits for from square
-        let to_bits = ((to as u16) & 0b111111) << 6; // 6 bits for to square
-        from_bits | to_bits
-    }
 
-    fn from_double_pawn_push(from: Square, to: Square) -> Self {
-        let from_bits = (from as u16) & 0b111111; // 6 bits for from square
-        let to_bits = ((to as u16) & 0b111111) << 6; // 6 bits for to square
-        let special_bits = 1u16 << 14; // 1 bit for if double pawn push
-        from_bits | to_bits | special_bits
-    }
-
-    fn from_castle(from: Square, to: Square, kingside: bool) -> Self {
-        let from_bits = (from as u16) & 0b111111; // 6 bits for from square
-        let to_bits = ((to as u16) & 0b111111) << 6; // 6 bits for to square
-        let special_bits = if kingside { 2u16 << 14 } else { 3u16 << 14 };
-        from_bits | to_bits | special_bits
-    }
-
-    fn from_capture(from: Square, to: Square, enpassant: bool) -> Self {
-        let from_bits = (from as u16) & 0b111111; // 6 bits for from square
-        let to_bits = ((to as u16) & 0b111111) << 6; // 6 bits for to square
-        let is_capture_bit = 1u16 << 13; // 1 bit for if capture
-        let special_bits = if enpassant { 1u16 << 14 } else { 0 };
-        from_bits | to_bits | is_capture_bit | special_bits
-    }
-
-    fn from_promotion(from: Square, to: Square, piece: PromotionPiece, is_capture: bool) -> Self {
-        let from_bits = (from as u16) & 0b111111; // 6 bits for from square
-        let to_bits = ((to as u16) & 0b111111) << 6; // 6 bits for to square
-        let is_promotion_bit = 1u16 << 12;
-        let is_capture_bit = if is_capture { 1u16 << 13 } else { 0 };
-        let special_bits = (piece as u16) << 14;
-        from_bits | to_bits | is_promotion_bit | is_capture_bit | special_bits
-    }
-
-    fn get_from(&self) -> Square {
-        let from_bits = self & 0b111111; // 6 bits for from square
-        Square::index(from_bits as usize)
-    }
-
-    fn get_to(&self) -> Square {
-        let to_bits = (self >> 6) & 0b111111; // 6 bits for to square
-        Square::index(to_bits as usize)
-    }
-
-    fn get_type(&self) -> MoveType {
-        let is_promotion_bit = (self >> 12) & 1; // 1 bit for if promotion
-        let is_capture_bit = (self >> 13) & 1; // 1 bit for if capture
-        let special_bits = ((self >> 14) & 0b11) as u8; // 2 bits for special moves
-
-        if is_promotion_bit == 1 {
-            MoveType::Promotion {
-                piece: PromotionPiece::index(special_bits),
-                is_capture: is_capture_bit == 1,
-            }
-        } else if is_capture_bit == 1 {
-            MoveType::Capture {
-                enpassant: special_bits == 1,
-            }
-        } else if special_bits == 0 {
-            MoveType::Quiet
-        } else if special_bits == 1 {
-            MoveType::DoublePawnPush
-        } else {
-            MoveType::Castle {
-                kingside: special_bits == 2,
-            }
-        }
+        s
     }
 }

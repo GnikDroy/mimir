@@ -20,6 +20,15 @@ pub trait BitBoardMethods {
     fn shift_north_west(&self) -> Self;
     fn shift_south_east(&self) -> Self;
     fn shift_south_west(&self) -> Self;
+    fn pop_lsb(&mut self) -> Option<Square>;
+    fn iter(self) -> BitBoardIterator
+    where
+        Self: Sized + Into<BitBoard>,
+    {
+        BitBoardIterator {
+            bitboard: self.into(),
+        }
+    }
 }
 
 impl BitBoardMethods for BitBoard {
@@ -92,8 +101,32 @@ impl BitBoardMethods for BitBoard {
     fn shift_south_west(&self) -> BitBoard {
         (self & !Self::FIRST_RANK & !Self::FIRST_FILE) >> (File::NUM + 1)
     }
+
+    fn pop_lsb(&mut self) -> Option<Square> {
+        if *self == 0 {
+            return None;
+        }
+        let idx = self.trailing_zeros() as usize;
+        *self &= *self - 1;
+        Some(Square::index(idx))
+    }
+}
+pub struct BitBoardIterator {
+    bitboard: BitBoard,
 }
 
+impl Iterator for BitBoardIterator {
+    type Item = Square;
+
+    fn next(&mut self) -> Option<Square> {
+        if self.bitboard == 0 {
+            return None;
+        }
+        let idx = self.bitboard.trailing_zeros() as usize;
+        self.bitboard &= self.bitboard - 1; // pop LSB
+        Some(Square::index(idx))
+    }
+}
 #[macro_export]
 macro_rules! bitboard {
     (

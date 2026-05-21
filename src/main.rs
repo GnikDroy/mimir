@@ -5,34 +5,18 @@ mod attack_table;
 #[macro_use]
 mod bitboard;
 mod core;
+pub use bitboard::BitBoard;
+mod board;
+mod move_generator;
 
-use crate::attack_table::AttackTable;
-use crate::bitboard::*;
-use crate::core::*;
-
-pub struct PieceBitBoards([BitBoard; Color::NUM * Piece::NUM]);
-
-impl PieceBitBoards {
-    fn get_index(color: Color, piece: Piece) -> usize {
-        piece as usize * Color::NUM + color as usize
-    }
-
-    pub fn get(&self, color: Color, piece: Piece) -> BitBoard {
-        self.0[PieceBitBoards::get_index(color, piece)]
-    }
-
-    pub fn get_mut(&mut self, color: Color, piece: Piece) -> &mut BitBoard {
-        &mut self.0[PieceBitBoards::get_index(color, piece)]
-    }
-}
+use board::GameState;
+use move_generator::MoveGenerator;
 
 fn main() {
-    let attacks = AttackTable::new();
-    for square in Square::all() {
-        let blockers: BitBoard = 0xffff000000000000;
-        println!(
-            "{}",
-            attacks.get(Piece::Queen, square, blockers).repr_string()
-        );
-    }
+    let state = GameState::starting_position();
+    let gen = MoveGenerator::new();
+
+    let moves = gen.generate_moves(&state);
+
+    println!("Starting position: {} pseudo-legal moves", moves.len());
 }

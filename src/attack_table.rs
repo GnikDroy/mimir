@@ -1,3 +1,4 @@
+use once_cell::sync::Lazy;
 use rand::prelude::*;
 
 use crate::bitboard::*;
@@ -56,7 +57,8 @@ struct MagicTable {
 
 pub struct AttackTable {
     king: [BitBoard; Square::NUM],
-    pawn: [BitBoard; Square::NUM],
+    white_pawn: [BitBoard; Square::NUM],
+    black_pawn: [BitBoard; Square::NUM],
     knight: [BitBoard; Square::NUM],
     bishop: [MagicTable; Square::NUM],
     rook: [MagicTable; Square::NUM],
@@ -83,7 +85,7 @@ impl AttackTable {
 
         let king = simple_pieces_moves(Self::attack_king);
         let knight = simple_pieces_moves(Self::attack_knight);
-        let pawn = simple_pieces_moves(Self::attack_pawn);
+        let white_pawn = simple_pieces_moves(Self::attack_pawn);
 
         let sliding_pieces_moves =
             |move_generator: fn(BitBoard, BitBoard) -> BitBoard,
@@ -108,37 +110,52 @@ impl AttackTable {
         let rook = sliding_pieces_moves(Self::attack_rook, Self::mask_rook);
         let bishop = sliding_pieces_moves(Self::attack_bishop, Self::mask_bishop);
 
+        let mut black_pawn = [BitBoard::EMPTY; 64];
+        for square in Square::all() {
+            black_pawn[square.flip_vertical() as usize] = white_pawn[square as usize].flip_ranks();
+        }
+
         AttackTable {
             king,
-            pawn,
+            white_pawn,
+            black_pawn,
             knight,
             bishop,
             rook,
         }
     }
 
-    pub fn get(&self, piece: Piece, square: Square, blockers: BitBoard) -> BitBoard {
-        match piece {
-            Piece::King => self.king[square as usize] & !blockers,
-            Piece::Pawn => self.pawn[square as usize] & !blockers,
-            Piece::Knight => self.knight[square as usize] & !blockers,
-            Piece::Rook => {
-                let table = &self.rook[square as usize];
-                table.boards[Self::index_table(&table.entry, blockers)]
-            }
-            Piece::Bishop => {
-                let table = &self.bishop[square as usize];
-                table.boards[Self::index_table(&table.entry, blockers)]
-            }
-            Piece::Queen => {
-                let rook_table = &self.rook[square as usize];
-                let bishop_table = &self.bishop[square as usize];
-                let rook_moves = rook_table.boards[Self::index_table(&rook_table.entry, blockers)];
-                let bishop_moves =
-                    bishop_table.boards[Self::index_table(&bishop_table.entry, blockers)];
-                rook_moves | bishop_moves
-            }
+    pub fn get_pawn(&self, square: Square, color: Color) -> BitBoard {
+        match color {
+            Color::White => self.white_pawn[square as usize],
+            Color::Black => self.black_pawn[square as usize],
         }
+    }
+
+    pub fn get_king(&self, square: Square) -> BitBoard {
+        self.king[square as usize]
+    }
+
+    pub fn get_knight(&self, square: Square) -> BitBoard {
+        self.knight[square as usize]
+    }
+
+    pub fn get_bishop(&self, square: Square, blockers: BitBoard) -> BitBoard {
+        let table = &self.bishop[square as usize];
+        table.boards[Self::index_table(&table.entry, blockers)]
+    }
+
+    pub fn get_rook(&self, square: Square, blockers: BitBoard) -> BitBoard {
+        let table = &self.rook[square as usize];
+        table.boards[Self::index_table(&table.entry, blockers)]
+    }
+
+    pub fn get_queen(&self, square: Square, blockers: BitBoard) -> BitBoard {
+        let rook_table = &self.rook[square as usize];
+        let bishop_table = &self.bishop[square as usize];
+        let rook_moves = rook_table.boards[Self::index_table(&rook_table.entry, blockers)];
+        let bishop_moves = bishop_table.boards[Self::index_table(&bishop_table.entry, blockers)];
+        rook_moves | bishop_moves
     }
 
     fn index_table(entry: &MagicEntry, blockers: BitBoard) -> usize {
@@ -335,6 +352,8 @@ impl AttackTable {
                 & !(Self::FIRST_RANK | Self::FIRST_FILE)
     }
 }
+
+pub static ATTACK_TABLE: Lazy<AttackTable> = Lazy::new(|| AttackTable::new());
 
 #[cfg(test)]
 mod tests {

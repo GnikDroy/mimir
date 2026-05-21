@@ -6,11 +6,8 @@ mod attack_table;
 mod bitboard;
 mod core;
 pub use bitboard::BitBoard;
-mod board;
+mod fen;
 mod move_generator;
+mod state;
 
-use move_generator::MoveGenerator;
-
-fn main() {
-    MoveGenerator::test_perft();
-}
+fn main() {}

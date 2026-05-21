@@ -128,6 +128,41 @@ impl Square {
         Self::index(rank as usize * File::NUM + file as usize)
     }
 
+    pub fn from_algebraic(algebraic: &str) -> Option<Self> {
+        if algebraic.len() != 2 {
+            return None;
+        }
+        let mut chars = algebraic.chars();
+        let file_char = chars.next().unwrap();
+        let rank_char = chars.next().unwrap();
+
+        let file = match file_char {
+            'a' | 'A' => File::A,
+            'b' | 'B' => File::B,
+            'c' | 'C' => File::C,
+            'd' | 'D' => File::D,
+            'e' | 'E' => File::E,
+            'f' | 'F' => File::F,
+            'g' | 'G' => File::G,
+            'h' | 'H' => File::H,
+            _ => return None,
+        };
+
+        let rank = match rank_char {
+            '1' => Rank::First,
+            '2' => Rank::Second,
+            '3' => Rank::Third,
+            '4' => Rank::Fourth,
+            '5' => Rank::Fifth,
+            '6' => Rank::Sixth,
+            '7' => Rank::Seventh,
+            '8' => Rank::Eighth,
+            _ => return None,
+        };
+
+        Some(Self::from_coordinate(file, rank))
+    }
+
     pub fn flip_vertical(&self) -> Self {
         let (file, rank) = self.coordinate();
         Self::from_coordinate(file, Rank::index(Rank::NUM - 1 - rank as usize))

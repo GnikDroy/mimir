@@ -1,7 +1,7 @@
 use crate::attack_table::ATTACK_TABLE;
 use crate::bitboard::{BitBoard, BitBoardMethods};
-use crate::board::GameState;
 use crate::core::*;
+use crate::state::GameState;
 pub struct MoveGenerator {}
 
 impl MoveGenerator {
@@ -28,34 +28,6 @@ impl MoveGenerator {
         }
 
         count
-    }
-
-    /// Test perft against known starting position values
-    pub fn test_perft() {
-        let gen = MoveGenerator::new();
-        let mut state = GameState::starting_position();
-
-        let expected_perft = [20, 400, 8902, 197281, 4865609, 119060324, 3195901860];
-
-        for (depth, perft_count) in expected_perft.iter().enumerate() {
-            let start_time = std::time::Instant::now();
-            let count = gen.perft(&mut state, depth as u8 + 1);
-            let elapsed = start_time.elapsed();
-            println!(
-                "Depth {}: {} nodes (calculated in {:.2?})",
-                depth + 1,
-                count,
-                elapsed
-            );
-            assert_eq!(
-                count,
-                *perft_count,
-                "Perft count mismatch at depth {}: expected {}, got {}",
-                depth + 1,
-                perft_count,
-                count
-            );
-        }
     }
 
     pub fn generate_moves(&self, state: &GameState) -> Vec<Move> {
@@ -340,8 +312,9 @@ impl Default for MoveGenerator {
 mod tests {
     use super::MoveGenerator;
     use crate::bitboard::*;
-    use crate::board::GameState;
     use crate::core::*;
+    use crate::state::GameState;
+    use std::time::Instant;
 
     fn empty_state() -> GameState {
         GameState::new()
@@ -356,6 +329,56 @@ mod tests {
 
     fn moves_for(state: GameState) -> Vec<u16> {
         MoveGenerator::new().generate_moves(&state)
+    }
+
+    fn perft_divide(state: &mut GameState, depth: u8) -> Vec<(Move, u64)> {
+        let gen = MoveGenerator::new();
+        let mut results = Vec::new();
+
+        if depth == 0 {
+            return results;
+        }
+
+        let moves = gen.generate_moves(state);
+        for move_encoded in moves {
+            let undo_info = state.make_move(move_encoded);
+
+            let count = if !state.is_in_check(state.side_to_move.opposite()) {
+                gen.perft(state, depth - 1)
+            } else {
+                0
+            };
+
+            state.unmake_move(move_encoded, undo_info);
+            results.push((move_encoded, count));
+        }
+
+        results
+    }
+
+    fn assert_perft_case(fen: &str, expected_perft: &[u64]) {
+        let mut state = GameState::from_fen(fen).unwrap();
+        let gen = MoveGenerator::new();
+
+        for (depth, perft_count) in expected_perft.iter().enumerate() {
+            let start_time = Instant::now();
+            let count = gen.perft(&mut state, depth as u8 + 1);
+            let elapsed = start_time.elapsed();
+            println!(
+                "Depth {}: {} nodes (calculated in {:.2?})",
+                depth + 1,
+                count,
+                elapsed
+            );
+            assert_eq!(
+                count,
+                *perft_count,
+                "Perft count mismatch at depth {}: expected {}, got {}",
+                depth + 1,
+                perft_count,
+                count
+            );
+        }
     }
 
     fn assert_state_eq(left: &GameState, right: &GameState) {
@@ -513,5 +536,40 @@ mod tests {
         state.unmake_move(mv, undo);
 
         assert_state_eq(&state, &before);
+    }
+
+    #[test]
+    fn starting_position_perft_matches_known_values() {
+        assert_perft_case(
+            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+            &[20, 400, 8902, 197281, 4865609, 119060324],
+        );
+    }
+
+    #[test]
+    fn complex_middle_game_perft_matches_known_values() {
+        assert_perft_case(
+            "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1",
+            &[48, 2039, 97862, 4085603, 193690690],
+        );
+    }
+
+    #[test]
+    fn endgame_perft_matches_known_values() {
+        assert_perft_case(
+            "8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1",
+            &[14, 191, 2812, 43238, 674624, 11030083, 178633661],
+        );
+    }
+
+    #[test]
+    fn divide_output_matches_depth_two_total() {
+        let mut state =
+            GameState::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1")
+                .unwrap();
+        let divide = perft_divide(&mut state, 2);
+
+        assert_eq!(divide.len(), 20);
+        assert_eq!(divide.iter().map(|(_, count)| count).sum::<u64>(), 400);
     }
 }

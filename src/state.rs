@@ -2,7 +2,6 @@ use crate::attack_table::ATTACK_TABLE;
 use crate::bitboard::*;
 use crate::core::*;
 
-/// Undo information for move reversal
 #[derive(Debug, Clone, Copy)]
 pub struct UndoInfo {
     pub captured_piece: Option<Piece>,
@@ -11,7 +10,6 @@ pub struct UndoInfo {
     pub halfmove_clock_before: u8,
 }
 
-/// Represents the complete game state
 #[derive(Debug, Clone, Copy)]
 pub struct GameState {
     pub pieces: [[BitBoard; Piece::NUM]; Color::NUM],
@@ -37,60 +35,8 @@ impl GameState {
         }
     }
 
-    /// Load standard starting position
     pub fn starting_position() -> Self {
-        let mut state = GameState::new();
-
-        let white_boards = &mut state.pieces[Color::White as usize];
-        white_boards[Piece::King as usize] = BitBoard::on(Square::E1);
-        white_boards[Piece::Queen as usize] = BitBoard::on(Square::D1);
-        white_boards[Piece::Rook as usize] = BitBoard::on(Square::A1) | BitBoard::on(Square::H1);
-        white_boards[Piece::Bishop as usize] = BitBoard::on(Square::C1) | BitBoard::on(Square::F1);
-        white_boards[Piece::Knight as usize] = BitBoard::on(Square::B1) | BitBoard::on(Square::G1);
-        white_boards[Piece::Pawn as usize] = bitboard!(
-            . . . . . . . .
-            . . . . . . . .
-            . . . . . . . .
-            . . . . . . . .
-            . . . . . . . .
-            . . . . . . . .
-            X X X X X X X X
-            . . . . . . . .
-        );
-
-        let black_boards = &mut state.pieces[Color::Black as usize];
-        black_boards[Piece::King as usize] = BitBoard::on(Square::E8);
-        black_boards[Piece::Queen as usize] = BitBoard::on(Square::D8);
-        black_boards[Piece::Rook as usize] = BitBoard::on(Square::A8) | BitBoard::on(Square::H8);
-        black_boards[Piece::Bishop as usize] = BitBoard::on(Square::C8) | BitBoard::on(Square::F8);
-        black_boards[Piece::Knight as usize] = BitBoard::on(Square::B8) | BitBoard::on(Square::G8);
-        black_boards[Piece::Pawn as usize] = bitboard!(
-            . . . . . . . .
-            X X X X X X X X
-            . . . . . . . .
-            . . . . . . . .
-            . . . . . . . .
-            . . . . . . . .
-            . . . . . . . .
-            . . . . . . . .
-        );
-
-        let mut white_occupancy = 0u64;
-        let mut black_occupancy = 0u64;
-
-        for piece in Piece::all() {
-            white_occupancy |= state.pieces[Color::White as usize][piece as usize];
-            black_occupancy |= state.pieces[Color::Black as usize][piece as usize];
-        }
-
-        state.occupancies[Color::White as usize] = white_occupancy;
-        state.occupancies[Color::Black as usize] = black_occupancy;
-        state.occupancies[2] = white_occupancy | black_occupancy; // All pieces
-
-        state.castling_rights = 0b1111; // All castling allowed
-        state.side_to_move = Color::White;
-        state.fullmove_number = 1;
-        state
+        GameState::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1").unwrap()
     }
 }
 
@@ -199,7 +145,23 @@ impl GameState {
 
         // Place piece at destination
         match move_type {
-            MoveType::Promotion { piece, .. } => {
+            MoveType::Promotion { piece, is_capture } => {
+                if is_capture {
+                    for piece in Piece::all() {
+                        if (self.pieces[enemy_color as usize][piece as usize] & to_board) != 0 {
+                            captured_piece = Some(piece);
+                            self.pieces[enemy_color as usize][piece as usize] &= !to_board;
+                            self.occupancies[enemy_color as usize] &= !to_board;
+                            break;
+                        }
+                    }
+                }
+                let piece = match piece {
+                    PromotionPiece::Knight => Piece::Knight,
+                    PromotionPiece::Bishop => Piece::Bishop,
+                    PromotionPiece::Rook => Piece::Rook,
+                    PromotionPiece::Queen => Piece::Queen,
+                };
                 self.pieces[moving_color as usize][piece as usize] |= to_board;
                 self.occupancies[moving_color as usize] |= to_board;
             }
@@ -278,7 +240,6 @@ impl GameState {
         }
     }
 
-    /// Undo a move using the provided undo information
     pub fn unmake_move(&mut self, move_encoded: u16, undo_info: UndoInfo) {
         let from = move_encoded.get_from();
         let to = move_encoded.get_to();
@@ -297,15 +258,18 @@ impl GameState {
         // Or for regular moves, just find and move the piece back
         match move_type {
             MoveType::Promotion { piece, .. } => {
-                // Remove the promoted piece from destination
+                let piece = match piece {
+                    PromotionPiece::Knight => Piece::Knight,
+                    PromotionPiece::Bishop => Piece::Bishop,
+                    PromotionPiece::Rook => Piece::Rook,
+                    PromotionPiece::Queen => Piece::Queen,
+                };
                 self.pieces[moving_color as usize][piece as usize] &= !to_board;
-                // Restore the pawn at source
                 self.pieces[moving_color as usize][Piece::Pawn as usize] |= from_board;
                 self.occupancies[moving_color as usize] &= !to_board;
                 self.occupancies[moving_color as usize] |= from_board;
             }
             _ => {
-                // Find the piece that moved and put it back
                 let moving_piece = Piece::all()
                     .find(|&p| (self.pieces[moving_color as usize][p as usize] & to_board) != 0)
                     .expect("No piece at to square");

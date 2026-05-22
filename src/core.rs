@@ -163,6 +163,31 @@ impl Square {
         Some(Self::from_coordinate(file, rank))
     }
 
+    pub fn to_algebraic(&self) -> String {
+        let (file, rank) = self.coordinate();
+        let file_char = match file {
+            File::A => 'a',
+            File::B => 'b',
+            File::C => 'c',
+            File::D => 'd',
+            File::E => 'e',
+            File::F => 'f',
+            File::G => 'g',
+            File::H => 'h',
+        };
+        let rank_char = match rank {
+            Rank::First => '1',
+            Rank::Second => '2',
+            Rank::Third => '3',
+            Rank::Fourth => '4',
+            Rank::Fifth => '5',
+            Rank::Sixth => '6',
+            Rank::Seventh => '7',
+            Rank::Eighth => '8',
+        };
+        format!("{}{}", file_char, rank_char)
+    }
+
     pub fn flip_vertical(&self) -> Self {
         let (file, rank) = self.coordinate();
         Self::from_coordinate(file, Rank::index(Rank::NUM - 1 - rank as usize))
@@ -228,7 +253,6 @@ pub type Move = u32;
 */
 
 pub enum MoveType {
-    Null,
     Quiet,
     DoublePawnPush,
     Castle {
@@ -441,9 +465,18 @@ impl MoveMethods for Move {
         let to = self.get_to();
 
         let mut s = format!("{:?}{:?}", from, to);
+        if self.is_promotion() {
+            let piece = self.get_promotion_piece().unwrap();
+            let char = match piece {
+                PromotionPiece::Queen => 'q',
+                PromotionPiece::Rook => 'r',
+                PromotionPiece::Bishop => 'b',
+                PromotionPiece::Knight => 'n',
+            };
+            s.push(char);
+        }
 
         match self.get_type() {
-            MoveType::Null => s.push_str(" (null move)"),
             MoveType::Quiet => {}
             MoveType::DoublePawnPush => s.push_str(" (double pawn push)"),
             MoveType::Castle { kingside } => {

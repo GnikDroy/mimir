@@ -1,3 +1,5 @@
+use std::ffi::os_str::Display;
+
 use crate::attack_table::ATTACK_TABLE;
 use crate::bitboard::*;
 use crate::core::*;
@@ -25,10 +27,10 @@ pub struct GameState {
 }
 
 impl GameState {
-    pub fn new() -> Self {
+    pub fn empty() -> Self {
         GameState {
             pieces: [[0; Piece::NUM]; Color::NUM],
-            occupancies: [0; 3],
+            occupancies: [0; Color::NUM + 1],
             side_to_move: Color::White,
             castling_rights: 0,
             en_passant: None,
@@ -37,14 +39,14 @@ impl GameState {
         }
     }
 
-    pub fn starting_position() -> Self {
+    pub fn new() -> Self {
         GameState::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1").unwrap()
     }
 }
 
 impl Default for GameState {
     fn default() -> Self {
-        Self::new()
+        Self::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1").unwrap()
     }
 }
 
@@ -92,14 +94,20 @@ impl GameState {
         self.is_square_attacked(Square::index(king_bb.trailing_zeros() as u8), enemy)
     }
 
-    #[inline(always)]
-    pub fn is_checkmate(&mut self) -> bool {
-        if !self.is_in_check(self.side_to_move) {
-            return false;
-        }
+    fn no_moves(&mut self) -> bool {
         let mut moves = Vec::with_capacity(256);
         self.generate_valid_moves(&mut moves);
         moves.is_empty()
+    }
+
+    #[inline(always)]
+    pub fn is_checkmate(&mut self) -> bool {
+        self.is_in_check(self.side_to_move) && self.no_moves()
+    }
+
+    #[inline(always)]
+    pub fn is_stalemate(&mut self) -> bool {
+        !self.is_in_check(self.side_to_move) && self.no_moves()
     }
 
     /// Make a move on the board and return undo information (does not validate legality)

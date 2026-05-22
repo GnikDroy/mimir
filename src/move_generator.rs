@@ -34,7 +34,7 @@ impl GameState {
         self.generate_moves(moves);
         moves.retain(|mv: &Move| {
             let undo = self.make_move(*mv);
-            let ok = !self.is_in_check(self.side_to_move);
+            let ok = !self.is_in_check(self.side_to_move.opposite());
             self.unmake_move(*mv, &undo);
             ok
         });
@@ -346,10 +346,6 @@ mod tests {
     use crate::state::GameState;
     use std::time::Instant;
 
-    fn empty_state() -> GameState {
-        GameState::new()
-    }
-
     fn set_piece(state: &mut GameState, color: Color, piece: Piece, square: Square) {
         let board = BitBoard::on(square);
         state.pieces[color as usize][piece as usize] |= board;
@@ -435,7 +431,7 @@ mod tests {
 
     #[test]
     fn starting_position_generates_twenty_white_moves() {
-        let state = GameState::starting_position();
+        let state = GameState::new();
         let mut moves = Vec::with_capacity(256);
         state.generate_moves(&mut moves);
 
@@ -444,7 +440,7 @@ mod tests {
 
     #[test]
     fn pawn_promotions_generate_all_promotion_moves() {
-        let mut state = empty_state();
+        let mut state = GameState::empty();
         state.side_to_move = Color::White;
         set_piece(&mut state, Color::White, Piece::King, Square::E1);
         set_piece(&mut state, Color::Black, Piece::King, Square::C8);
@@ -466,7 +462,7 @@ mod tests {
 
     #[test]
     fn en_passant_move_is_generated() {
-        let mut state = empty_state();
+        let mut state = GameState::empty();
         state.side_to_move = Color::White;
         state.en_passant = Some(Square::D6);
 
@@ -489,7 +485,7 @@ mod tests {
 
     #[test]
     fn castling_is_generated_when_path_is_clear_and_unattacked() {
-        let mut state = empty_state();
+        let mut state = GameState::empty();
         state.side_to_move = Color::White;
         state.castling_rights = 0b0001;
 
@@ -499,7 +495,9 @@ mod tests {
 
         let mut moves = Vec::with_capacity(256);
         state.generate_moves(&mut moves);
-
+        for mv in moves.iter() {
+            println!("{}", mv.repr_string());
+        }
         assert!(moves.contains(&Move::from_castle(
             Square::E1,
             Square::G1,
@@ -510,7 +508,7 @@ mod tests {
 
     #[test]
     fn castling_is_blocked_when_path_is_attacked() {
-        let mut state = empty_state();
+        let mut state = GameState::empty();
         state.side_to_move = Color::White;
         state.castling_rights = 0b0001;
 
@@ -532,7 +530,7 @@ mod tests {
 
     #[test]
     fn en_passant_make_and_unmake_restores_state() {
-        let mut state = empty_state();
+        let mut state = GameState::empty();
         state.side_to_move = Color::White;
         state.en_passant = Some(Square::D6);
 
@@ -551,7 +549,7 @@ mod tests {
 
     #[test]
     fn castling_make_and_unmake_restores_state() {
-        let mut state = empty_state();
+        let mut state = GameState::empty();
         state.side_to_move = Color::White;
         state.castling_rights = 0b0001;
 
@@ -569,7 +567,7 @@ mod tests {
 
     #[test]
     fn promotion_make_and_unmake_restores_state() {
-        let mut state = empty_state();
+        let mut state = GameState::empty();
         state.side_to_move = Color::White;
 
         set_piece(&mut state, Color::White, Piece::King, Square::E1);

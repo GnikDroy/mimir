@@ -210,6 +210,7 @@ impl FromStr for GameState {
     }
 }
 
+#[cfg(test)]
 mod tests {
     use super::*;
 

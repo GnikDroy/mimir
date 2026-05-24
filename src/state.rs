@@ -1,5 +1,3 @@
-use std::ffi::os_str::Display;
-
 use crate::attack_table::ATTACK_TABLE;
 use crate::bitboard::*;
 use crate::core::*;

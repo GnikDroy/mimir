@@ -1,6 +1,6 @@
+use crate::core::*;
 use crate::evaluation::{evaluate, MATE_SCORE};
 use crate::state::GameState;
-use crate::{core::*, move_generator};
 
 pub struct SearchResult {
     pub best_move: Option<Move>,
@@ -79,7 +79,7 @@ impl Searcher {
         depth: u8,
         ply: usize,
         mut alpha: i32,
-        mut beta: i32,
+        beta: i32,
     ) -> (Option<Move>, i32) {
         if depth == 0 {
             return (None, self.quiescence(state, ply, alpha, beta));

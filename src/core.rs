@@ -464,7 +464,7 @@ impl MoveMethods for Move {
         let from = self.get_from();
         let to = self.get_to();
 
-        let mut s = format!("{:?}{:?}", from, to);
+        let mut s = format!("{}{}", from.to_algebraic(), to.to_algebraic());
         if self.is_promotion() {
             let piece = self.get_promotion_piece().unwrap();
             let char = match piece {

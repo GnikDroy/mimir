@@ -101,7 +101,7 @@ const ENDGAME_MATERIAL_VALUES: [i32; Piece::NUM] = [0, 936, 512, 297, 281, 94];
 
 const PHASE_LIMIT: i32 = 24;
 
-// pub fn evaluate(state: &GameState) -> i32 { return 0; }
+pub const MATE_SCORE: i32 = 10_000;
 
 pub fn evaluate(state: &GameState) -> i32 {
     let side_to_move = state.side_to_move;

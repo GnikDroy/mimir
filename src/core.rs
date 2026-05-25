@@ -69,7 +69,7 @@ impl Rank {
 }
 
 #[repr(u8)]
-#[derive(num_enum::UnsafeFromPrimitive, Debug, Clone, Copy)]
+#[derive(num_enum::UnsafeFromPrimitive, Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(dead_code)]
 pub enum File {
     A,
@@ -268,6 +268,7 @@ pub enum MoveType {
 }
 pub trait MoveMethods {
     fn repr_string(&self) -> String;
+    fn debug_string(&self) -> String;
 
     fn from_quiet(from: Square, to: Square, moved: Piece) -> Self;
 
@@ -293,6 +294,8 @@ pub trait MoveMethods {
 
     fn get_from(&self) -> Square;
     fn get_to(&self) -> Square;
+    fn set_from(&mut self, from: Square);
+    fn set_to(&mut self, to: Square);
 
     fn is_capture(&self) -> bool;
     fn is_promotion(&self) -> bool;
@@ -374,6 +377,16 @@ impl MoveMethods for Move {
     #[inline(always)]
     fn get_to(&self) -> Square {
         Square::index(((self >> 6) & 0b111111) as u8)
+    }
+
+    #[inline(always)]
+    fn set_from(&mut self, from: Square) {
+        *self = (*self & !0b111111) | (from as u32);
+    }
+
+    #[inline(always)]
+    fn set_to(&mut self, to: Square) {
+        *self = (*self & !(0b111111 << 6)) | ((to as u32) << 6);
     }
 
     #[inline(always)]
@@ -476,6 +489,12 @@ impl MoveMethods for Move {
             s.push(char);
         }
 
+        s
+    }
+
+    fn debug_string(&self) -> String {
+        let mut s = self.repr_string();
+
         match self.get_type() {
             MoveType::Quiet => {}
             MoveType::DoublePawnPush => s.push_str(" (double pawn push)"),
@@ -501,7 +520,6 @@ impl MoveMethods for Move {
                 }
             }
         }
-
         s
     }
 }

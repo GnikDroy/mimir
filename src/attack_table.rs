@@ -57,12 +57,7 @@ impl AttackTable {
                         let board = BitBoard::on(square);
                         let mask = mask_generator(board) & !board;
                         let index_bits = mask.count_ones();
-                        Self::find_magic(
-                            move_generator,
-                            mask_generator,
-                            board,
-                            64 - index_bits as u8,
-                        )
+                        Self::find_magic(move_generator, mask, board, 64 - index_bits as u8)
                     })
                     .collect::<Vec<MagicTable>>()
                     .try_into()
@@ -128,46 +123,75 @@ impl AttackTable {
 
     fn find_magic(
         move_generator: fn(BitBoard, BitBoard) -> BitBoard,
-        mask_generator: fn(BitBoard) -> BitBoard,
+        mask: BitBoard,
         board: BitBoard,
         shift: u8,
     ) -> MagicTable {
-        let mut rng = rand::rng();
-        let mask = mask_generator(board);
-        loop {
-            // low number of enabled bits is preferred
-            let magic = rng.random::<u64>() & rng.random::<u64>() & rng.random::<u64>();
-            let entry = MagicEntry { mask, magic, shift };
-            if let Some(boards) = Self::try_make_table(move_generator, board, &entry) {
-                return MagicTable { entry, boards };
-            }
-        }
-    }
+        let index_bits = 64 - shift;
+        let table_size = 1usize << index_bits;
 
-    fn try_make_table(
-        move_generator: fn(BitBoard, BitBoard) -> BitBoard,
-        board: BitBoard,
-        entry: &MagicEntry,
-    ) -> Option<Vec<BitBoard>> {
-        let index_bits = 64 - entry.shift;
-        let mut table = vec![BitBoard::EMPTY; 1 << index_bits];
+        // Precompute all blocker subsets + move boards once.
+        let mut occupancies = Vec::new();
+        let mut moves = Vec::new();
         let mut blockers = BitBoard::EMPTY;
-        loop {
-            let moves = move_generator(board, blockers);
-            let table_entry = &mut table[Self::index_table(&entry, blockers)];
-            if *table_entry == BitBoard::EMPTY {
-                *table_entry = moves;
-            } else if *table_entry != moves {
-                return None;
-            }
 
-            // https://www.chessprogramming.org/Traversing_Subsets_of_a_Set#All_Subsets_of_any_Set
-            blockers = blockers.wrapping_sub(entry.mask) & entry.mask;
+        loop {
+            occupancies.push(blockers);
+            moves.push(move_generator(board, blockers));
+            blockers = blockers.wrapping_sub(mask) & mask;
+
             if blockers == BitBoard::EMPTY {
                 break;
             }
         }
-        Some(table)
+
+        let mut rng = rand::rng();
+        // Reused buffers.
+        let mut table = vec![BitBoard::EMPTY; table_size];
+        let mut used = vec![0u32; table_size];
+        let mut generation = 1u32;
+
+        loop {
+            // Sparse magics tend to work better.
+            let magic = rng.random::<u64>() & rng.random::<u64>() & rng.random::<u64>();
+            let entry = MagicEntry { mask, magic, shift };
+
+            if Self::try_make_table(
+                &entry,
+                &occupancies,
+                &moves,
+                &mut table,
+                &mut used,
+                generation,
+            ) {
+                return MagicTable {
+                    entry,
+                    boards: table,
+                };
+            }
+
+            generation = generation.wrapping_add(1);
+        }
+    }
+
+    fn try_make_table(
+        entry: &MagicEntry,
+        occupancies: &[BitBoard],
+        moves: &[BitBoard],
+        table: &mut [BitBoard],
+        used: &mut [u32],
+        generation: u32,
+    ) -> bool {
+        for (&blockers, &moveset) in occupancies.iter().zip(moves) {
+            let idx = Self::index_table(entry, blockers);
+            if used[idx] != generation {
+                used[idx] = generation;
+                table[idx] = moveset;
+            } else if table[idx] != moveset {
+                return false;
+            }
+        }
+        true
     }
 
     fn slide_north(board: BitBoard, blockers: BitBoard) -> BitBoard {

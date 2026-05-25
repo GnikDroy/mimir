@@ -185,7 +185,7 @@ impl Square {
             Rank::Seventh => '7',
             Rank::Eighth => '8',
         };
-        format!("{}{}", file_char, rank_char)
+        String::from_iter([file_char, rank_char])
     }
 
     pub fn flip_vertical(&self) -> Self {
@@ -211,7 +211,7 @@ impl Square {
 }
 
 #[repr(u8)]
-#[derive(num_enum::UnsafeFromPrimitive, Debug, Clone, Copy)]
+#[derive(num_enum::UnsafeFromPrimitive, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PromotionPiece {
     Queen,
     Rook,

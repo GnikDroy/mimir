@@ -1,20 +1,21 @@
-use chess_engine::{search, GameState, MoveMethods, ATTACK_TABLE};
+use chess_engine::{pgn::uci_to_pgn, search, GameState, MoveMethods, ATTACK_TABLE};
 use once_cell::sync::Lazy;
 
 fn main() {
     Lazy::force(&ATTACK_TABLE);
 
-    let mut state = GameState::new();
+    let fen = "8/8/4k3/8/8/8/8/KBB5 w - - 0 1";
+    let mut state = GameState::from_fen(fen).unwrap();
 
     let mut searcher = search::Searcher::new();
 
-    let limit = 200;
+    let limit = 50;
     let mut cnt = 0;
     let mut history = vec![];
 
     while !state.is_checkmate() && !state.is_stalemate() && cnt < limit {
         let start_time = std::time::Instant::now();
-        let result = searcher.search(&mut state, 6);
+        let result = searcher.search(&mut state, 9);
         let elapsed = start_time.elapsed();
         println!(
             "Position: {}, Best move: {:?}, Eval: {}, Depth: {}, QDepth: {}, Nodes: {}, Time: {:.2?}, Nodes/s: {:.2}",
@@ -32,8 +33,11 @@ fn main() {
         cnt += 1;
     }
 
-    history
+    let uci = history
         .iter()
         .map(|m| m.repr_string())
-        .for_each(|s| print!("{} ", s));
+        .collect::<Vec<_>>()
+        .join(" ");
+    println!("Best move sequence: {}", uci);
+    println!("{}", uci_to_pgn(&uci, fen.into()));
 }

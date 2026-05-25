@@ -2,17 +2,20 @@
 
 extern crate num_enum;
 
-mod attack_table;
-
 #[macro_use]
 mod bitboard;
 
+mod attack_table;
+
 pub mod core;
-pub mod evaluation;
+pub mod state;
+
 pub mod fen;
+pub mod pgn;
+
+pub mod evaluation;
 pub mod move_generator;
 pub mod search;
-pub mod state;
 
 pub use attack_table::ATTACK_TABLE;
 pub use bitboard::BitBoard;

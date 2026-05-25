@@ -196,3 +196,62 @@ impl Default for Searcher {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn get_best_moves_till_limit(
+        state: &mut GameState,
+        search_depth: u8,
+        max_moves: usize,
+    ) -> Vec<Move> {
+        let mut searcher = Searcher::new();
+        let mut history = vec![];
+
+        for _ in 0..max_moves {
+            if state.is_checkmate() || state.is_stalemate() {
+                break;
+            }
+            let result = searcher.search(state, search_depth);
+            if let Some(best_move) = result.best_move {
+                history.push(best_move);
+                state.make_move(best_move);
+            } else {
+                break;
+            }
+        }
+
+        history
+    }
+
+    fn assert_move_sequence(mut state: GameState, expected_moves: &[&str], search_depth: u8) {
+        let best_moves = get_best_moves_till_limit(&mut state, search_depth, expected_moves.len());
+        assert_eq!(best_moves.len(), expected_moves.len());
+        for (i, mv) in best_moves.iter().enumerate() {
+            assert_eq!(mv.repr_string(), expected_moves[i]);
+        }
+    }
+
+    #[test]
+    fn test_search_mate_in_one() {
+        let state = GameState::from_fen("3r4/1K6/2Nb4/2kb4/8/8/3PB3/8 w - - 0 1").unwrap();
+        let best_moves_expected = ["d2d4"];
+        assert_move_sequence(state, &best_moves_expected, 4);
+    }
+
+    #[test]
+    fn test_search_mate_in_two() {
+        let state =
+            GameState::from_fen("5rk1/5ppp/2p5/1p6/1Q1p1P2/2Pq4/bP2R2P/rNK1R3 w - - 0 24").unwrap();
+        let best_moves_expected = ["b4f8", "g8f8", "e2e8"];
+        assert_move_sequence(state, &best_moves_expected, 4);
+    }
+
+    #[test]
+    fn test_search_mate_in_three() {
+        let state = GameState::from_fen("8/8/8/P7/5knN/1P6/7p/7K b - - 1 53").unwrap();
+        let best_moves_expected = ["f4g3", "h4f5", "g3h3", "f5e3", "g4f2"];
+        assert_move_sequence(state, &best_moves_expected, 5);
+    }
+}

@@ -101,7 +101,7 @@ const ENDGAME_MATERIAL_VALUES: [i32; Piece::NUM] = [0, 936, 512, 297, 281, 94];
 
 const PHASE_LIMIT: i32 = 24;
 
-pub const MATE_SCORE: i32 = 10_000;
+pub const MATE_SCORE: i32 = i32::MAX / 2;
 
 pub fn evaluate(state: &GameState) -> i32 {
     let side_to_move = state.side_to_move;
@@ -137,4 +137,43 @@ pub fn evaluate(state: &GameState) -> i32 {
     let mg_phase = phase.min(PHASE_LIMIT);
     let eg_phase = PHASE_LIMIT - mg_phase;
     (mg_score * mg_phase + eg_score * eg_phase) / PHASE_LIMIT
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_evaluate() {
+        let state = GameState::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1")
+            .unwrap();
+        let eval = evaluate(&state);
+        assert_eq!(eval, 0);
+    }
+
+    #[test]
+    fn test_evaluate_material_imbalance() {
+        let state = GameState::from_fen("rnb1kbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1")
+            .unwrap();
+        let eval = evaluate(&state);
+        assert!(eval > 800);
+    }
+
+    #[test]
+    fn test_evaluate_positional_advantage() {
+        let state =
+            GameState::from_fen("rnbqkbnr/pppppppp/8/8/3PP3/2N2N2/PPP2PPP/R1BQKB1R w KQkq - 0 1")
+                .unwrap();
+        let eval = evaluate(&state);
+        println!("Eval: {}", eval);
+        assert!(eval > 100);
+    }
+
+    #[test]
+    fn test_evaluate_black_advantage() {
+        let state = GameState::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNB1KBNR w KQkq - 0 1")
+            .unwrap();
+        let eval = evaluate(&state);
+        assert!(eval < -800);
+    }
 }

@@ -16,6 +16,7 @@ pub mod pgn;
 pub mod evaluation;
 pub mod move_generator;
 pub mod search;
+pub mod zobrist;
 
 pub use attack_table::ATTACK_TABLE;
 pub use bitboard::BitBoard;

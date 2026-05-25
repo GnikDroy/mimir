@@ -4,6 +4,7 @@ use std::str::FromStr;
 use crate::bitboard::{BitBoard, BitBoardMethods};
 use crate::core::*;
 use crate::state::*;
+use crate::zobrist::ZOBRIST_HASHER;
 
 impl GameState {
     pub fn from_fen(fen: &str) -> Result<Self, String> {
@@ -15,6 +16,7 @@ impl GameState {
             en_passant: None,
             halfmove_clock: 0,
             fullmove_number: 1,
+            zobrist_hash: 0,
         };
 
         let parts: Vec<&str> = fen.split_whitespace().collect();
@@ -100,6 +102,7 @@ impl GameState {
             .parse::<u16>()
             .map_err(|_| "Invalid FEN fullmove number")?;
 
+        gs.zobrist_hash = ZOBRIST_HASHER.hash(&gs);
         Ok(gs)
     }
 

@@ -1,6 +1,7 @@
 use crate::attack_table::ATTACK_TABLE;
 use crate::bitboard::*;
 use crate::core::*;
+use crate::zobrist::ZOBRIST_HASHER;
 
 #[derive(Debug, Clone, Copy)]
 pub struct UndoInfo {
@@ -22,11 +23,12 @@ pub struct GameState {
     pub en_passant: Option<Square>,
     pub halfmove_clock: u8,
     pub fullmove_number: u16,
+    pub zobrist_hash: u64,
 }
 
 impl GameState {
     pub fn empty() -> Self {
-        GameState {
+        let mut state = GameState {
             pieces: [[0; Piece::NUM]; Color::NUM],
             occupancies: [0; Color::NUM + 1],
             side_to_move: Color::White,
@@ -34,7 +36,10 @@ impl GameState {
             en_passant: None,
             halfmove_clock: 0,
             fullmove_number: 1,
-        }
+            zobrist_hash: 0,
+        };
+        state.zobrist_hash = ZOBRIST_HASHER.hash(&state);
+        state
     }
 
     pub fn new() -> Self {
@@ -44,7 +49,7 @@ impl GameState {
 
 impl Default for GameState {
     fn default() -> Self {
-        Self::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1").unwrap()
+        Self::new()
     }
 }
 
@@ -128,26 +133,51 @@ impl GameState {
         // Find the moving piece
         let moving_piece = move_encoded.get_moved_piece();
 
+        // Prepare incremental zobrist key update
+        let mut key = self.zobrist_hash;
+
+        // remove castling & en passant old keys
+        let castling_index_before = (castling_rights_before & 0b1111) as usize;
+        key ^= ZOBRIST_HASHER.castling_rights[castling_index_before];
+        if let Some(ep_sq) = en_passant_before {
+            let file = ep_sq.coordinate().0 as usize;
+            key ^= ZOBRIST_HASHER.en_passant[file];
+        }
+
         // Remove piece from source
         self.pieces[moving_color as usize][moving_piece as usize] &= !from_board;
         self.occupancies[moving_color as usize] &= !from_board;
+
+        // XOR out moving piece from source square
+        key ^= ZOBRIST_HASHER.square[moving_color as usize][moving_piece as usize][from as usize];
 
         // Place piece at destination
         if move_encoded.is_promotion() {
             let piece = move_encoded.get_promotion_piece().unwrap().to_piece();
             self.pieces[moving_color as usize][piece as usize] |= to_board;
             self.occupancies[moving_color as usize] |= to_board;
+
+            // promotion: add promoted piece at destination
+            key ^= ZOBRIST_HASHER.square[moving_color as usize][piece as usize][to as usize];
         } else {
             self.pieces[moving_color as usize][moving_piece as usize] |= to_board;
             self.occupancies[moving_color as usize] |= to_board;
+
+            // add moved piece at destination
+            key ^= ZOBRIST_HASHER.square[moving_color as usize][moving_piece as usize][to as usize];
         }
 
         let captured_piece = move_encoded.get_captured_piece();
 
-        // Handle captures
-        if let Some(_) = captured_piece {
-            self.pieces[enemy_color as usize][captured_piece.unwrap() as usize] &= !to_board;
-            self.occupancies[enemy_color as usize] &= !to_board;
+        // Handle normal captures (en passant is handled separately)
+        if let Some(captured) = captured_piece {
+            if !move_encoded.is_enpassant() {
+                self.pieces[enemy_color as usize][captured as usize] &= !to_board;
+                self.occupancies[enemy_color as usize] &= !to_board;
+
+                // XOR out captured piece on destination
+                key ^= ZOBRIST_HASHER.square[enemy_color as usize][captured as usize][to as usize];
+            }
         }
 
         // Handle en passant captures
@@ -159,6 +189,10 @@ impl GameState {
             let capture_board = BitBoard::on(capture_square);
             self.pieces[enemy_color as usize][Piece::Pawn as usize] &= !capture_board;
             self.occupancies[enemy_color as usize] &= !capture_board;
+
+            // XOR out the captured pawn for en passant
+            key ^= ZOBRIST_HASHER.square[enemy_color as usize][Piece::Pawn as usize]
+                [capture_square as usize];
         }
 
         // Update castling rights
@@ -200,6 +234,12 @@ impl GameState {
             None
         };
 
+        // XOR in new en passant if present
+        if let Some(ep_sq) = self.en_passant {
+            let file = ep_sq.coordinate().0 as usize;
+            key ^= ZOBRIST_HASHER.en_passant[file];
+        }
+
         // Handle castling
         if move_encoded.is_castle() {
             let kingside = move_encoded.is_kingside_castle();
@@ -215,13 +255,24 @@ impl GameState {
             self.pieces[moving_color as usize][Piece::Rook as usize] |= rook_to_board;
             self.occupancies[moving_color as usize] &= !rook_from_board;
             self.occupancies[moving_color as usize] |= rook_to_board;
+
+            // XOR rook move for castling
+            key ^= ZOBRIST_HASHER.square[moving_color as usize][Piece::Rook as usize]
+                [rook_from as usize];
+            key ^= ZOBRIST_HASHER.square[moving_color as usize][Piece::Rook as usize]
+                [rook_to as usize];
         }
 
         self.occupancies[2] =
             self.occupancies[moving_color as usize] | self.occupancies[enemy_color as usize];
 
-        // Toggle side to move
+        // XOR in new castling rights
+        let castling_index_after = (self.castling_rights & 0b1111) as usize;
+        key ^= ZOBRIST_HASHER.castling_rights[castling_index_after];
+
+        // Toggle side to move (and xor side key)
         self.side_to_move = enemy_color;
+        key ^= ZOBRIST_HASHER.side_is_black;
 
         if self.side_to_move == Color::White {
             self.fullmove_number += 1;
@@ -232,6 +283,9 @@ impl GameState {
         } else {
             1
         };
+
+        // store updated hash
+        self.zobrist_hash = key;
 
         UndoInfo {
             captured_piece,
@@ -250,6 +304,19 @@ impl GameState {
         // Restore side to move first (so we identify the moving side correctly)
         self.side_to_move = self.side_to_move.opposite();
 
+        // Prepare incremental zobrist update
+        let mut key = self.zobrist_hash;
+        // flipping side: xor side key
+        key ^= ZOBRIST_HASHER.side_is_black;
+
+        // remove current castling & en passant keys (we will xor in the previous ones later)
+        let castling_index_current = (self.castling_rights & 0b1111) as usize;
+        key ^= ZOBRIST_HASHER.castling_rights[castling_index_current];
+        if let Some(ep_sq) = self.en_passant {
+            let file = ep_sq.coordinate().0 as usize;
+            key ^= ZOBRIST_HASHER.en_passant[file];
+        }
+
         let from_board = BitBoard::on(from);
         let to_board = BitBoard::on(to);
 
@@ -264,12 +331,22 @@ impl GameState {
             self.pieces[moving_color as usize][Piece::Pawn as usize] |= from_board;
             self.occupancies[moving_color as usize] &= !to_board;
             self.occupancies[moving_color as usize] |= from_board;
+
+            // XOR out promoted piece at destination, xor in pawn at source
+            key ^= ZOBRIST_HASHER.square[moving_color as usize][piece as usize][to as usize];
+            key ^=
+                ZOBRIST_HASHER.square[moving_color as usize][Piece::Pawn as usize][from as usize];
         } else {
             let moving_piece = undo_info.moved_piece;
             self.pieces[moving_color as usize][moving_piece as usize] &= !to_board;
             self.pieces[moving_color as usize][moving_piece as usize] |= from_board;
             self.occupancies[moving_color as usize] &= !to_board;
             self.occupancies[moving_color as usize] |= from_board;
+
+            // XOR out moved piece at destination, xor in at source
+            key ^= ZOBRIST_HASHER.square[moving_color as usize][moving_piece as usize][to as usize];
+            key ^=
+                ZOBRIST_HASHER.square[moving_color as usize][moving_piece as usize][from as usize];
         }
 
         // Handle en passant & capture piece restore
@@ -281,10 +358,17 @@ impl GameState {
             let capture_board = BitBoard::on(capture_square);
             self.pieces[enemy_color as usize][Piece::Pawn as usize] |= capture_board;
             self.occupancies[enemy_color as usize] |= capture_board;
+
+            // XOR in the restored pawn for en passant
+            key ^= ZOBRIST_HASHER.square[enemy_color as usize][Piece::Pawn as usize]
+                [capture_square as usize];
         } else if move_encoded.is_capture() {
             let captured = undo_info.captured_piece.unwrap();
             self.pieces[enemy_color as usize][captured as usize] |= to_board;
             self.occupancies[enemy_color as usize] |= to_board;
+
+            // XOR in the restored captured piece
+            key ^= ZOBRIST_HASHER.square[enemy_color as usize][captured as usize][to as usize];
         }
 
         // Handle castling unmake
@@ -301,15 +385,33 @@ impl GameState {
             self.pieces[moving_color as usize][Piece::Rook as usize] |= rook_from_board;
             self.occupancies[moving_color as usize] &= !rook_to_board;
             self.occupancies[moving_color as usize] |= rook_from_board;
+
+            // XOR rook move reversal: remove rook at to, add at from
+            key ^= ZOBRIST_HASHER.square[moving_color as usize][Piece::Rook as usize]
+                [rook_to as usize];
+            key ^= ZOBRIST_HASHER.square[moving_color as usize][Piece::Rook as usize]
+                [rook_from as usize];
         }
 
         self.occupancies[2] =
             self.occupancies[moving_color as usize] | self.occupancies[enemy_color as usize];
 
         // Restore game state
+        // XOR in previous castling & en passant
+        let castling_index_prev = (undo_info.castling_rights_before & 0b1111) as usize;
+        key ^= ZOBRIST_HASHER.castling_rights[castling_index_prev];
+
         self.en_passant = undo_info.en_passant_before;
+        if let Some(ep_sq) = self.en_passant {
+            let file = ep_sq.coordinate().0 as usize;
+            key ^= ZOBRIST_HASHER.en_passant[file];
+        }
+
         self.castling_rights = undo_info.castling_rights_before;
         self.halfmove_clock = undo_info.halfmove_clock_before;
         self.fullmove_number = undo_info.fullmove_number_before;
+
+        // store updated hash
+        self.zobrist_hash = key;
     }
 }

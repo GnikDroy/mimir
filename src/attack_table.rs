@@ -344,7 +344,6 @@ pub static ATTACK_TABLE: Lazy<AttackTable> = Lazy::new(|| AttackTable::new());
 #[cfg(test)]
 mod tests {
     use super::AttackTable;
-    use crate::bitboard;
     use crate::bitboard::*;
     use crate::core::*;
 

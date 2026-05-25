@@ -4,6 +4,8 @@ use crate::core::*;
 use crate::state::GameState;
 
 impl GameState {
+    // This function is exposed because engines often use perft to validate move generation and make/unmake logic
+    // Stockfish for example has a go perft command that runs perft and prints the results for each move at the root
     pub fn perft(&mut self, depth: u8, moves_list: &mut [Vec<Move>]) -> u64 {
         if depth == 0 {
             return 1;

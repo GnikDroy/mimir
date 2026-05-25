@@ -154,9 +154,10 @@ impl Searcher {
         let move_count = {
             let moves = &mut self.move_pool[ply];
             let in_check = state.is_in_check(state.side_to_move);
-            // only consider captures if not in check, otherwise we might miss important evasions
+            // only filter captures/promotions if not in check
+            // otherwise we might miss important evasions
             if !in_check {
-                moves.retain(|&mv| mv.is_capture());
+                moves.retain(|&mv| mv.is_capture() || mv.is_promotion());
             }
             moves.sort_by_key(|&mv| -Searcher::score_move(mv, state));
             moves.len()

@@ -267,16 +267,28 @@ mod tests {
 
     #[test]
     fn test_uci_to_pgn() {
-        let uci = "b1c3 g7g6 g1f3 f8g7 c3e4 b8c6 e2e3 c6e5 f1e2 e8f8 e1g1 e5f3 e2f3 d7d5 e4c5 d8d6 c5b3 g8f6 f1e1 f8g8 e1e2 c8d7 e2e1 g6g5 h2h3 a8d8 b3d4 e7e5 d4b3 d7a4 g1h1 a4b3 c2b3 e5e4 f3g4 d8e8 h1g1 d5d4 e3d4 d6d4 d1c2 d4b6 g4f5 b6a5 f5e4 a5b4 f2f3 b4d6 g1h1 d6g3 e1e2 g3d6 c2c4 f6h5 e2e3 h5g3 h1g1 g3e4 e3e4 e8b8 c4a4 d6b6 g1h1 g7f6 e4e8 g8g7 e8b8 h8b8 a4e4 b6c5 h1h2 c5d6 h2g1 f6d4 g1h1 d6f6 a1b1 g7g8 e4e2 f6f5 d2d3 f5a5 b1a1 a5b5";
-        let expected_pgn = r#"[Event "?"]
-[Site "?"]
-[Date "????.??.??"]
-[Round "?"]
-[White "?"]
-[Black "?"]
-[Result "*"]
-
-1. Nc3 g6 2. Nf3 Bg7 3. Ne4 Nc6 4. e3 Ne5 5. Be2 Kf8 6. O-O Nxf3+ 7. Bxf3 d5 8. Nc5 Qd6 9. Nb3 Nf6 10. Re1 Kg8 11. Re2 Bd7 12. Re1 g5 13. h3 Rd8 14. Nd4 e5 15. Nb3 Ba4 16. Kh1 Bxb3 17. cxb3 e4 18. Bg4 Re8 19. Kg1 d4 20. exd4 Qxd4 21. Qc2 Qb6 22. Bf5 Qa5 23. Bxe4 Qb4 24. f3 Qd6 25. Kh1 Qg3 26. Re2 Qd6 27. Qc4 Nh5 28. Re3 Ng3+ 29. Kg1 Nxe4 30. Rxe4 Rb8 31. Qa4 Qb6+ 32. Kh1 Bf6 33. Re8+ Kg7 34. Rxb8 Rxb8 35. Qe4 Qc5 36. Kh2 Qd6+ 37. Kg1 Bd4+ 38. Kh1 Qf6 39. Rb1 Kg8 40. Qe2 Qf5 41. d3 Qa5 42. Ra1 Qb5 *"#;
+        let uci = "\
+        b1c3 g7g6 g1f3 f8g7 c3e4 b8c6 e2e3 c6e5 f1e2 e8f8 e1g1 e5f3 e2f3 d7d5 e4c5 d8d6 \
+        c5b3 g8f6 f1e1 f8g8 e1e2 c8d7 e2e1 g6g5 h2h3 a8d8 b3d4 e7e5 d4b3 d7a4 g1h1 a4b3 \
+        c2b3 e5e4 f3g4 d8e8 h1g1 d5d4 e3d4 d6d4 d1c2 d4b6 g4f5 b6a5 f5e4 a5b4 f2f3 b4d6 \
+        g1h1 d6g3 e1e2 g3d6 c2c4 f6h5 e2e3 h5g3 h1g1 g3e4 e3e4 e8b8 c4a4 d6b6 g1h1 g7f6 \
+        e4e8 g8g7 e8b8 h8b8 a4e4 b6c5 h1h2 c5d6 h2g1 f6d4 g1h1 d6f6 a1b1 g7g8 e4e2 f6f5 \
+        d2d3 f5a5 b1a1 a5b5";
+        let expected_pgn = "\
+                [Event \"?\"]\n\
+                [Site \"?\"]\n\
+                [Date \"????.??.??\"]\n\
+                [Round \"?\"]\n\
+                [White \"?\"]\n\
+                [Black \"?\"]\n\
+                [Result \"*\"]\n\n\
+                1. Nc3 g6 2. Nf3 Bg7 3. Ne4 Nc6 4. e3 Ne5 5. Be2 Kf8 6. O-O Nxf3+ 7. Bxf3 d5 \
+                8. Nc5 Qd6 9. Nb3 Nf6 10. Re1 Kg8 11. Re2 Bd7 12. Re1 g5 13. h3 Rd8 14. Nd4 e5 \
+                15. Nb3 Ba4 16. Kh1 Bxb3 17. cxb3 e4 18. Bg4 Re8 19. Kg1 d4 20. exd4 Qxd4 \
+                21. Qc2 Qb6 22. Bf5 Qa5 23. Bxe4 Qb4 24. f3 Qd6 25. Kh1 Qg3 26. Re2 Qd6 27. Qc4 Nh5 \
+                28. Re3 Ng3+ 29. Kg1 Nxe4 30. Rxe4 Rb8 31. Qa4 Qb6+ 32. Kh1 Bf6 33. Re8+ Kg7 \
+                34. Rxb8 Rxb8 35. Qe4 Qc5 36. Kh2 Qd6+ 37. Kg1 Bd4+ 38. Kh1 Qf6 39. Rb1 Kg8 40. Qe2 Qf5 \
+                41. d3 Qa5 42. Ra1 Qb5 *";
         let pgn = uci_to_pgn(uci, None);
         assert_eq!(pgn, expected_pgn);
     }
@@ -337,7 +349,7 @@ mod tests {
     #[test]
     fn test_uci_with_initial_fen() {
         let initial_fen = "7k/6p1/1ppr3p/5R2/1P1q4/r2P3P/2Q1RPP1/5K2 b - - 0 32";
-        let uci = "a3a1 e2e1 a1e1 f1e1 d6e6 e1d1 d4b4 f5f8 b4f8 c2c4 e6f6 f2f3 f6g6 c4c2 f8d6 c2b2 d6h2 b2b4 h2g1 b4e1 g1e1 d1e1 g6g2 e1f1 g2h2 f1g1 h2h3 g1f2 h8h7 f2e2 h7g6 e2f2 h3h2 f2e3 g6f5 d3d4 h2h3 d4d5 c6d5 e3d4 f5e6 d4e3 e6e5 e3e2 e5f4 e2d3 f4f3 d3d4 h3h5 d4c3 h5h4 c3d3 h4c4 d3d2 f3e4 d2e2 c4c2 e2e1 e4f3 e1d1 c2c3 d1d2 d5d4 d2d1 f3e3 d1e1 c3c1";
+        let uci = "a3a1 e2e1 a1e1 f1e1 d6e6 e1d1 d4b4 f5f8 b4f8 c2c4 e6f6";
         let pgn = uci_to_pgn(uci, initial_fen.into());
     }
 }

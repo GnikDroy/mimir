@@ -486,7 +486,7 @@ mod tests {
     }
 
     #[test]
-    fn castling_is_generated_when_path_is_clear_and_unattacked() {
+    fn castling_is_generated_when_path_is_clear_and_not_attacked() {
         let mut state = GameState::empty();
         state.side_to_move = Color::White;
         state.castling_rights = 0b0001;
@@ -497,9 +497,6 @@ mod tests {
 
         let mut moves = Vec::with_capacity(256);
         state.generate_moves(&mut moves);
-        for mv in moves.iter() {
-            println!("{}", mv.repr_string());
-        }
         assert!(moves.contains(&Move::from_castle(
             Square::E1,
             Square::G1,

@@ -132,7 +132,7 @@ mod tests {
     }
 
     #[test]
-    fn test_zobrist_perft_complex_midgame() {
+    fn test_zobrist_perft_complex_middlegame() {
         let mut state = GameState::from_fen(
             "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1",
         )
@@ -143,7 +143,7 @@ mod tests {
     }
 
     #[test]
-    fn test_zobristh_perft_endgame() {
+    fn test_zobrist_perft_endgame() {
         let mut state = GameState::from_fen("8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1").unwrap();
         let depth: u8 = 5;
         let mut moves_list = vec![Vec::<Move>::with_capacity(256); depth as usize + 1];

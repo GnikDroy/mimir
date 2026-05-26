@@ -351,5 +351,17 @@ mod tests {
         let initial_fen = "7k/6p1/1ppr3p/5R2/1P1q4/r2P3P/2Q1RPP1/5K2 b - - 0 32";
         let uci = "a3a1 e2e1 a1e1 f1e1 d6e6 e1d1 d4b4 f5f8 b4f8 c2c4 e6f6";
         let pgn = uci_to_pgn(uci, initial_fen.into());
+        let expected_pgn = "\
+            [Event \"?\"]\n\
+            [Site \"?\"]\n\
+            [Date \"????.??.??\"]\n\
+            [Round \"?\"]\n\
+            [White \"?\"]\n\
+            [Black \"?\"]\n\
+            [Result \"*\"]\n\
+            [FEN \"7k/6p1/1ppr3p/5R2/1P1q4/r2P3P/2Q1RPP1/5K2 b - - 0 32\"]\n\
+            [SetUp \"1\"]\n\n\
+            32... Ra1+ 33. Re1 Rxe1+ 34. Kxe1 Re6+ 35. Kd1 Qxb4 36. Rf8+ Qxf8 37. Qc4 Rf6 *";
+        assert_eq!(pgn, expected_pgn);
     }
 }

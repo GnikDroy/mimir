@@ -3,19 +3,24 @@ use crate::evaluation::{evaluate, MATE_SCORE};
 use crate::state::GameState;
 use crate::transposition_table::{TranspositionEntry, TranspositionFlag, TranspositionTable};
 
-pub struct SearchResult {
-    pub best_move: Option<Move>,
-    pub evaluation: i32,
-    pub depth: u8,
+#[derive(Debug, Clone, Copy)]
+pub struct SearchAnalytics {
     pub nodes_searched: u64,
     pub max_quiescence_depth_reached: u8,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct SearchResult {
+    pub best_move: Option<Move>,
+    pub evaluation: i32,
+    pub depth: u8,
+    pub analytics: SearchAnalytics,
+}
+
 pub struct Searcher {
-    nodes_searched: u64,
-    max_quiescence_depth_reached: u8,
     move_pool: Vec<Vec<Move>>,
     transposition_table: TranspositionTable,
+    analytics: SearchAnalytics,
 }
 
 const MAX_PLY: usize = 64;
@@ -24,10 +29,12 @@ impl Searcher {
     pub fn new() -> Self {
         let move_pool = vec![Vec::with_capacity(256); MAX_PLY]; // Preallocate move storage for each depth
         Searcher {
-            nodes_searched: 0,
-            max_quiescence_depth_reached: 0,
             move_pool,
             transposition_table: TranspositionTable::new(),
+            analytics: SearchAnalytics {
+                nodes_searched: 0,
+                max_quiescence_depth_reached: 0,
+            },
         }
     }
 
@@ -59,6 +66,7 @@ impl Searcher {
 
     /// Simple static move ordering score: promotions highest, then captures (MVV-LVA),
     /// then castles, double pawn pushes, then quiet moves.
+    /// all of them are given bonuses from transposition table move if it matches, to ensure we search the tt move first``
     fn score_move(mv: Move, _state: &GameState, tt_move: Option<Move>) -> i32 {
         // Material values aligned with `core::Piece` ordering: King, Queen, Rook, Bishop, Knight, Pawn
         const PIECE_VALUES: [i32; Piece::NUM] = [20000, 900, 500, 330, 320, 100];
@@ -82,8 +90,8 @@ impl Searcher {
     /// Iterative deepening search: tries depths 1, 2, 3, ... until time/depth limit
     /// Returns the best move and evaluation found at the deepest completed depth
     pub fn search(&mut self, state: &mut GameState, max_depth: u8) -> SearchResult {
-        self.nodes_searched = 0;
-        self.max_quiescence_depth_reached = 0;
+        self.analytics.nodes_searched = 0;
+        self.analytics.max_quiescence_depth_reached = 0;
         let mut best_move = None;
         let mut best_eval = 0i32;
 
@@ -99,8 +107,7 @@ impl Searcher {
             best_move,
             evaluation: best_eval,
             depth: max_depth,
-            nodes_searched: self.nodes_searched,
-            max_quiescence_depth_reached: self.max_quiescence_depth_reached,
+            analytics: self.analytics,
         }
     }
 
@@ -116,23 +123,21 @@ impl Searcher {
             return (None, self.quiescence(state, ply, alpha, beta));
         }
 
-        self.nodes_searched += 1;
+        self.analytics.nodes_searched += 1;
 
         let original_alpha = alpha;
         let original_beta = beta;
         let tt_entry = self.transposition_table.probe(state.zobrist_hash);
 
+        // Check if transposition table has a valid entry for this position and depth,
+        // and use it to potentially cut off the search early
         if let Some(entry) = tt_entry.filter(|entry| entry.depth >= depth) {
             let tt_score = Self::score_from_tt(entry.score, ply);
 
             match entry.flag {
                 TranspositionFlag::Exact => return (entry.best_move, tt_score),
                 TranspositionFlag::LowerBound => alpha = alpha.max(tt_score),
-                TranspositionFlag::UpperBound => {
-                    if tt_score < beta {
-                        beta = tt_score;
-                    }
-                }
+                TranspositionFlag::UpperBound => beta = beta.min(tt_score),
             }
 
             if alpha >= beta {
@@ -140,6 +145,8 @@ impl Searcher {
             }
         }
 
+        // sort moves by heuristic score (captures/promotions first, then tt move if available)
+        // to improve alpha-beta efficiency
         let move_count = {
             let moves = &mut self.move_pool[ply];
 
@@ -154,27 +161,35 @@ impl Searcher {
 
         let mut best_move = None;
         let mut best_eval = i32::MIN / 2;
-
         for i in 0..move_count {
             let mv = self.move_pool[ply][i];
             let undo_info = state.make_move(mv);
+            // (alpha, beta) -> (-beta, -alpha) is standard in negamax
             let (_, eval) = self.alpha_beta(state, depth - 1, ply + 1, -beta, -alpha);
-            let eval = -eval;
-
             state.unmake_move(mv, &undo_info);
 
+            // Core negamax idea. We negate the evaluation score returned.
+            // This means each player is maximizing their own score.
+            let eval = -eval;
+
+            // min(-eval, -best_eval) = max(eval, best_eval)
+            // So, this works for both players without needing to check which side is to move
             if eval > best_eval {
                 best_eval = eval;
                 best_move = Some(mv);
             }
 
+            // update alpha.
+            // alpha-beta on negamax, unlike minimax doesn't require updating beta.
             alpha = alpha.max(eval);
 
+            // This is the core alpha-beta cutoff.
             if alpha >= beta {
                 break;
             }
         }
 
+        // checkmate and stalemate detection.
         if move_count == 0 {
             if state.is_in_check(state.side_to_move) {
                 best_eval = -MATE_SCORE + (ply as i32);
@@ -183,6 +198,7 @@ impl Searcher {
             }
         }
 
+        // write to transposition table
         let flag = if best_eval <= original_alpha {
             TranspositionFlag::UpperBound
         } else if best_eval >= original_beta {
@@ -204,9 +220,12 @@ impl Searcher {
 
     /// Quiescence search: search captures until a quiet position is reached
     fn quiescence(&mut self, state: &mut GameState, ply: usize, mut alpha: i32, beta: i32) -> i32 {
-        self.max_quiescence_depth_reached = self.max_quiescence_depth_reached.max(ply as u8);
-        self.nodes_searched += 1;
+        self.analytics.max_quiescence_depth_reached =
+            self.analytics.max_quiescence_depth_reached.max(ply as u8);
+        self.analytics.nodes_searched += 1;
 
+        // check for checkmate/stalemate before generating moves,
+        // to avoid missing quiet mates or stalemates in quiescence search
         {
             let moves = &mut self.move_pool[ply];
             moves.clear();
@@ -249,15 +268,20 @@ impl Searcher {
             let eval = -self.quiescence(state, ply + 1, -beta, -alpha);
             state.unmake_move(mv, &undo_info);
 
-            if eval >= beta {
-                return beta;
-            }
+            // update alpha.
+            // alpha-beta on negamax, unlike minimax doesn't require updating beta.
+            alpha = alpha.max(eval);
 
-            if eval > alpha {
-                alpha = eval;
+            // core alpha-beta cutoff.
+            if alpha >= beta {
+                break;
             }
         }
 
+        // Fail-soft quiescence: return the best score found,
+        // which may exceed the original alpha bound.
+        // A fail-hard implementation would instead return beta
+        // immediately on cutoff.
         alpha
     }
 }
@@ -284,7 +308,21 @@ mod tests {
             if state.is_checkmate() || state.is_stalemate() {
                 break;
             }
+            let initial_time = std::time::Instant::now();
             let result = searcher.search(state, search_depth);
+            let elapsed = initial_time.elapsed();
+            println!(
+                "Depth: {}, Best Move: {}, Eval: {}, Nodes: {}, Max Depth: {}, Max QDepth: {}, Time: {:?}",
+                result.depth,
+                result
+                    .best_move
+                    .map_or("None".to_string(), |mv| mv.repr_string()),
+                result.evaluation,
+                result.analytics.nodes_searched,
+                result.depth,
+                result.analytics.max_quiescence_depth_reached,
+                elapsed
+            );
             if let Some(best_move) = result.best_move {
                 history.push(best_move);
                 state.make_move(best_move);
@@ -300,7 +338,6 @@ mod tests {
         let best_moves = get_best_moves_till_limit(&mut state, search_depth, expected_moves.len());
         assert_eq!(best_moves.len(), expected_moves.len());
         for (i, mv) in best_moves.iter().enumerate() {
-            println!("Move {}: {}", i + 1, mv.repr_string());
             assert_eq!(mv.repr_string(), expected_moves[i]);
         }
     }

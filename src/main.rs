@@ -5,7 +5,6 @@ fn main() {
     Lazy::force(&ATTACK_TABLE);
 
     let fen = "8/8/4k3/8/8/8/8/KBB5 w - - 0 1";
-    let fen = "8/8/4k3/8/8/8/1N6/KB6 w - - 0 1";
     let mut state = GameState::from_fen(fen).unwrap();
 
     let mut searcher = search::Searcher::new();
@@ -24,10 +23,10 @@ fn main() {
             result.best_move.unwrap().repr_string(),
             result.evaluation,
             result.depth,
-            result.max_quiescence_depth_reached,
-            result.nodes_searched,
+            result.analytics.max_quiescence_depth_reached,
+            result.analytics.nodes_searched,
             elapsed,
-            result.nodes_searched as f64 / elapsed.as_secs_f64().max(0.00001)
+            result.analytics.nodes_searched as f64 / elapsed.as_secs_f64().max(0.00001)
         );
         history.push(result.best_move.unwrap());
         state.make_move(result.best_move.unwrap());

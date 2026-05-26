@@ -165,7 +165,6 @@ mod tests {
             GameState::from_fen("rnbqkbnr/pppppppp/8/8/3PP3/2N2N2/PPP2PPP/R1BQKB1R w KQkq - 0 1")
                 .unwrap();
         let eval = evaluate(&state);
-        println!("Eval: {}", eval);
         assert!(eval > 100);
     }
 

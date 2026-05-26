@@ -1,6 +1,7 @@
 use crate::core::*;
 use crate::evaluation::{evaluate, MATE_SCORE};
 use crate::state::GameState;
+use crate::transposition_table::{TranspositionEntry, TranspositionFlag, TranspositionTable};
 
 pub struct SearchResult {
     pub best_move: Option<Move>,
@@ -14,6 +15,7 @@ pub struct Searcher {
     nodes_searched: u64,
     max_quiescence_depth_reached: u8,
     move_pool: Vec<Vec<Move>>,
+    transposition_table: TranspositionTable,
 }
 
 const MAX_PLY: usize = 64;
@@ -25,26 +27,55 @@ impl Searcher {
             nodes_searched: 0,
             max_quiescence_depth_reached: 0,
             move_pool,
+            transposition_table: TranspositionTable::new(),
+        }
+    }
+
+    #[inline(always)]
+    fn score_to_tt(score: i32, ply: usize) -> i32 {
+        let ply = ply as i32;
+
+        if score > MATE_SCORE - MAX_PLY as i32 {
+            score + ply
+        } else if score < -MATE_SCORE + MAX_PLY as i32 {
+            score - ply
+        } else {
+            score
+        }
+    }
+
+    #[inline(always)]
+    fn score_from_tt(score: i32, ply: usize) -> i32 {
+        let ply = ply as i32;
+
+        if score > MATE_SCORE - MAX_PLY as i32 {
+            score - ply
+        } else if score < -MATE_SCORE + MAX_PLY as i32 {
+            score + ply
+        } else {
+            score
         }
     }
 
     /// Simple static move ordering score: promotions highest, then captures (MVV-LVA),
     /// then castles, double pawn pushes, then quiet moves.
-    fn score_move(mv: Move, _state: &GameState) -> i32 {
+    fn score_move(mv: Move, _state: &GameState, tt_move: Option<Move>) -> i32 {
         // Material values aligned with `core::Piece` ordering: King, Queen, Rook, Bishop, Knight, Pawn
         const PIECE_VALUES: [i32; Piece::NUM] = [20000, 900, 500, 330, 320, 100];
 
+        let tt_bonus = if Some(mv) == tt_move { 1_000_000 } else { 0 };
+
         match mv.get_type() {
-            MoveType::Promotion { .. } => 20000,
+            MoveType::Promotion { .. } => 20000 + tt_bonus,
             MoveType::Capture { .. } => {
                 let captured = mv.get_captured_piece().unwrap_or(Piece::Pawn) as usize;
                 let moved = mv.get_moved_piece() as usize;
                 // MVV-LVA style: prefer capturing high-value pieces with low-value attackers
-                (PIECE_VALUES[captured] * 100) - (PIECE_VALUES[moved] as i32)
+                ((PIECE_VALUES[captured] * 100) - (PIECE_VALUES[moved] as i32)) + tt_bonus
             }
-            MoveType::Castle { .. } => 500,
-            MoveType::DoublePawnPush => 50,
-            _ => 0,
+            MoveType::Castle { .. } => 500 + tt_bonus,
+            MoveType::DoublePawnPush => 50 + tt_bonus,
+            _ => tt_bonus,
         }
     }
 
@@ -79,7 +110,7 @@ impl Searcher {
         depth: u8,
         ply: usize,
         mut alpha: i32,
-        beta: i32,
+        mut beta: i32,
     ) -> (Option<Move>, i32) {
         if depth == 0 {
             return (None, self.quiescence(state, ply, alpha, beta));
@@ -87,13 +118,36 @@ impl Searcher {
 
         self.nodes_searched += 1;
 
+        let original_alpha = alpha;
+        let original_beta = beta;
+        let tt_entry = self.transposition_table.probe(state.zobrist_hash);
+
+        if let Some(entry) = tt_entry.filter(|entry| entry.depth >= depth) {
+            let tt_score = Self::score_from_tt(entry.score, ply);
+
+            match entry.flag {
+                TranspositionFlag::Exact => return (entry.best_move, tt_score),
+                TranspositionFlag::LowerBound => alpha = alpha.max(tt_score),
+                TranspositionFlag::UpperBound => {
+                    if tt_score < beta {
+                        beta = tt_score;
+                    }
+                }
+            }
+
+            if alpha >= beta {
+                return (entry.best_move, tt_score);
+            }
+        }
+
         let move_count = {
             let moves = &mut self.move_pool[ply];
 
             moves.clear();
             state.generate_valid_moves(moves);
 
-            moves.sort_by_key(|&mv| -Searcher::score_move(mv, state));
+            let tt_move = tt_entry.and_then(|entry| entry.best_move);
+            moves.sort_by_key(|&mv| -Searcher::score_move(mv, state, tt_move));
 
             moves.len()
         };
@@ -129,6 +183,22 @@ impl Searcher {
             }
         }
 
+        let flag = if best_eval <= original_alpha {
+            TranspositionFlag::UpperBound
+        } else if best_eval >= original_beta {
+            TranspositionFlag::LowerBound
+        } else {
+            TranspositionFlag::Exact
+        };
+
+        self.transposition_table.store(TranspositionEntry {
+            key: state.zobrist_hash,
+            depth,
+            score: Self::score_to_tt(best_eval, ply),
+            flag,
+            best_move,
+        });
+
         (best_move, best_eval)
     }
 
@@ -159,7 +229,7 @@ impl Searcher {
             if !in_check {
                 moves.retain(|&mv| mv.is_capture() || mv.is_promotion());
             }
-            moves.sort_by_key(|&mv| -Searcher::score_move(mv, state));
+            moves.sort_by_key(|&mv| -Searcher::score_move(mv, state, None));
             moves.len()
         };
 
@@ -230,6 +300,7 @@ mod tests {
         let best_moves = get_best_moves_till_limit(&mut state, search_depth, expected_moves.len());
         assert_eq!(best_moves.len(), expected_moves.len());
         for (i, mv) in best_moves.iter().enumerate() {
+            println!("Move {}: {}", i + 1, mv.repr_string());
             assert_eq!(mv.repr_string(), expected_moves[i]);
         }
     }
@@ -251,8 +322,8 @@ mod tests {
 
     #[test]
     fn test_search_mate_in_three() {
-        let state = GameState::from_fen("8/8/8/P7/5knN/1P6/7p/7K b - - 1 53").unwrap();
-        let best_moves_expected = ["f4g3", "h4f5", "g3h3", "f5e3", "g4f2"];
+        let state = GameState::from_fen("4k1r1/R6p/4Nb2/4n3/6Pq/2P4P/3Q3K/5R2 w - - 2 2").unwrap();
+        let best_moves_expected = ["d2d8", "f6d8", "f1f8", "g8f8", "e6g7"];
         assert_move_sequence(state, &best_moves_expected, 5);
     }
 }

@@ -5,17 +5,18 @@ fn main() {
     Lazy::force(&ATTACK_TABLE);
 
     let fen = "8/8/4k3/8/8/8/8/KBB5 w - - 0 1";
+    let fen = "8/8/4k3/8/8/8/1N6/KB6 w - - 0 1";
     let mut state = GameState::from_fen(fen).unwrap();
 
     let mut searcher = search::Searcher::new();
 
-    let limit = 50;
+    let limit = 100;
     let mut cnt = 0;
     let mut history = vec![];
 
     while !state.is_checkmate() && !state.is_stalemate() && cnt < limit {
         let start_time = std::time::Instant::now();
-        let result = searcher.search(&mut state, 9);
+        let result = searcher.search(&mut state, 14);
         let elapsed = start_time.elapsed();
         println!(
             "Position: {}, Best move: {:?}, Eval: {}, Depth: {}, QDepth: {}, Nodes: {}, Time: {:.2?}, Nodes/s: {:.2}",

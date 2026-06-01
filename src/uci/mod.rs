@@ -1,5 +1,4 @@
 pub mod adapter;
-pub mod io;
 pub mod parser;
 
 use once_cell::sync::Lazy;
@@ -11,7 +10,7 @@ pub fn run() {
 
     let mut adapter = adapter::UCIAdapter::new();
 
-    while let Some(command) = parser::UCICommand::read() {
+    while let Some(command) = parser::UCICommand::read(&mut std::io::stdin().lock()) {
         if !adapter.handle_command(command) {
             break;
         }

@@ -1,6 +1,6 @@
 use std::sync::{
     atomic::{AtomicU64, Ordering},
-    Arc,
+    Arc, Mutex,
 };
 use std::thread;
 use std::time::Duration;
@@ -9,12 +9,12 @@ use crate::core::*;
 use crate::search::{SearchResult, Searcher};
 use crate::state::GameState;
 
-use super::io;
 use super::parser::{GoCommand, UCICommand};
 
 pub struct UCIAdapter {
     state: GameState,
     search_generation: Arc<AtomicU64>,
+    out: Arc<Mutex<Box<dyn std::io::Write + Send>>>,
 }
 
 impl UCIAdapter {
@@ -22,6 +22,7 @@ impl UCIAdapter {
         Self {
             state: GameState::new(),
             search_generation: Arc::new(AtomicU64::new(0)),
+            out: Arc::new(Mutex::new(Box::new(std::io::stdout()))),
         }
     }
 
@@ -29,12 +30,16 @@ impl UCIAdapter {
         self.search_generation.fetch_add(1, Ordering::SeqCst) + 1
     }
 
-    pub fn handle_info(info: SearchResult) {
+    pub fn handle_info<W: std::io::Write>(
+        info: SearchResult,
+        writer: &mut W,
+    ) -> std::io::Result<()> {
         let nodes = info.analytics.total_nodes();
         let nps = info.analytics.nodes_per_second();
         let time = info.analytics.elapsed.as_millis();
         match info.best_move {
-            Some(best_move) => io::write(&format!(
+            Some(best_move) => write!(
+                writer,
                 "info depth {} score cp {} time {} nodes {} nps {} pv {}",
                 info.analytics.depth,
                 info.evaluation,
@@ -42,23 +47,28 @@ impl UCIAdapter {
                 nodes,
                 nps,
                 best_move.repr_string()
-            )),
-            None => io::write(&format!(
+            ),
+            None => write!(
+                writer,
                 "info depth {} score cp {} time {} nodes {} nps {}",
                 info.analytics.depth, info.evaluation, time, nodes, nps
-            )),
-        }
+            ),
+        }?;
+
+        Ok(())
     }
 
     pub fn handle_command(&mut self, command: UCICommand) -> bool {
         match command {
             UCICommand::Uci => {
-                io::write("id name chess_engine");
-                io::write("id author gnikdroy");
-                io::write("uciok");
+                let mut out = self.out.lock().unwrap();
+                writeln!(out, "id name chess_engine").ok();
+                writeln!(out, "id author gnikdroy").ok();
+                writeln!(out, "uciok").ok();
             }
             UCICommand::IsReady => {
-                io::write("readyok");
+                let mut out = self.out.lock().unwrap();
+                writeln!(out, "readyok").ok();
             }
             UCICommand::UciNewGame => {
                 self.state = GameState::new();
@@ -101,6 +111,7 @@ impl UCIAdapter {
     fn launch_search(&mut self, go: GoCommand) {
         let generation = self.next_generation();
         let generation_token = Arc::clone(&self.search_generation);
+        let out = Arc::clone(&self.out);
         let mut state = self.state;
 
         thread::spawn(move || {
@@ -115,12 +126,23 @@ impl UCIAdapter {
             );
 
             let depth = go.depth.unwrap_or(20);
-            let result = searcher.search(&mut state, depth, Some(Self::handle_info));
+            let result = searcher.search(
+                &mut state,
+                depth,
+                Some(|info: SearchResult| {
+                    if let Ok(mut writer) = out.lock() {
+                        let _ = Self::handle_info(info, &mut *writer);
+                    }
+                }),
+            );
 
             if generation_token.load(Ordering::SeqCst) == generation {
-                match result.best_move {
-                    Some(best_move) => io::write(&format!("bestmove {}", best_move.repr_string())),
-                    None => io::write("bestmove 0000"),
+                let msg = match result.best_move {
+                    Some(best_move) => format!("bestmove {}", best_move.repr_string()),
+                    None => "bestmove 0000".to_string(),
+                };
+                if let Ok(mut writer) = out.lock() {
+                    let _ = writeln!(writer, "{}", msg);
                 }
             }
         });

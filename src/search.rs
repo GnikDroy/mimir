@@ -60,9 +60,11 @@ pub struct Searcher {
     transposition_table: TranspositionTable,
     time_control: TimeControl,
     analytics: SearchAnalytics,
+    killer_moves: Vec<[Option<Move>; 2]>,
 }
 
 const MAX_PLY: usize = 64;
+const KILLER_MOVES_PER_PLY: usize = 2;
 
 // Check for timeouts every N nodes in alpha-beta and every M quiescence nodes.
 const NODE_CHECK_INTERVAL: u64 = 256;
@@ -71,11 +73,13 @@ const QUIESCENCE_NODE_CHECK_INTERVAL: u64 = 128;
 impl Searcher {
     pub fn new() -> Self {
         let move_pool = vec![Vec::with_capacity(256); MAX_PLY]; // Preallocate move storage for each depth
+        let killer_moves = vec![[None; KILLER_MOVES_PER_PLY]; MAX_PLY];
 
         let time_control = TimeControl::new(Duration::from_mins(1), Duration::from_secs(0));
 
         Searcher {
             move_pool,
+            killer_moves,
             transposition_table: TranspositionTable::new(),
             analytics: SearchAnalytics::default(),
             time_control: time_control,
@@ -122,13 +126,25 @@ impl Searcher {
     }
 
     /// Simple static move ordering score: promotions highest, then captures (MVV-LVA),
-    /// then castles, double pawn pushes, then quiet moves.
-    /// all of them are given bonuses from transposition table move if it matches, to ensure we search the tt move first``
-    fn score_move(mv: Move, _state: &GameState, tt_move: Option<Move>) -> i32 {
+    /// then castles, double pawn pushes, then quiet moves, and killer moves.
+    /// all of them are given bonuses from transposition table move if it matches, to ensure we search the tt move first
+    fn score_move(
+        mv: Move,
+        _state: &GameState,
+        tt_move: Option<Move>,
+        killer_moves: &[Option<Move>; KILLER_MOVES_PER_PLY],
+    ) -> i32 {
         // Material values aligned with `core::Piece` ordering: King, Queen, Rook, Bishop, Knight, Pawn
         const PIECE_VALUES: [i32; Piece::NUM] = [20000, 900, 500, 330, 320, 100];
 
         let tt_bonus = if Some(mv) == tt_move { 1_000_000 } else { 0 };
+
+        // Check if move is a killer move (quiet move that caused cutoff at this depth)
+        let killer_bonus = if killer_moves.contains(&Some(mv)) {
+            9_000
+        } else {
+            0
+        };
 
         match mv.get_type() {
             MoveType::Promotion { .. } => 20000 + tt_bonus,
@@ -139,9 +155,29 @@ impl Searcher {
                 ((PIECE_VALUES[captured] * 100) - (PIECE_VALUES[moved] as i32)) + tt_bonus
             }
             MoveType::Castle { .. } => 500 + tt_bonus,
-            MoveType::DoublePawnPush => 50 + tt_bonus,
-            _ => tt_bonus,
+            MoveType::DoublePawnPush => 50 + tt_bonus + killer_bonus,
+            _ => killer_bonus + tt_bonus,
         }
+    }
+
+    /// Add a killer move at the given ply. Maintains up to 2 killer moves per ply.
+    /// When a new killer move is added, the first one becomes the second and the new one becomes first.
+    #[inline]
+    fn add_killer_move(&mut self, ply: usize, mv: Move) {
+        if ply >= MAX_PLY {
+            return;
+        }
+
+        let killers = &mut self.killer_moves[ply];
+
+        // Don't add if it's already the primary killer
+        if killers[0] == Some(mv) {
+            return;
+        }
+
+        // Shift and add new killer
+        killers[1] = killers[0];
+        killers[0] = Some(mv);
     }
 
     /// Iterative deepening search: tries depths 1, 2, 3, ... until time/depth limit
@@ -153,6 +189,12 @@ impl Searcher {
         report_fn: Option<impl Fn(SearchResult)>,
     ) -> SearchResult {
         self.analytics = SearchAnalytics::default();
+        // Clear killer moves at the start of a new search
+        for killers in self.killer_moves.iter_mut() {
+            killers[0] = None;
+            killers[1] = None;
+        }
+
         let mut best_move = None;
         let mut best_eval = 0i32;
 
@@ -239,7 +281,7 @@ impl Searcher {
             }
         }
 
-        // sort moves by heuristic score (captures/promotions first, then tt move if available)
+        // sort moves by heuristic score (captures/promotions first, then tt move if available, then killer moves)
         // to improve alpha-beta efficiency
         let move_count = {
             let moves = &mut self.move_pool[ply];
@@ -248,7 +290,8 @@ impl Searcher {
             state.generate_valid_moves(moves);
 
             let tt_move = tt_entry.and_then(|entry| entry.best_move);
-            moves.sort_by_key(|&mv| -Searcher::score_move(mv, state, tt_move));
+            let killer_moves = self.killer_moves[ply];
+            moves.sort_by_key(|&mv| -Searcher::score_move(mv, state, tt_move, &killer_moves));
 
             moves.len()
         };
@@ -288,6 +331,11 @@ impl Searcher {
             // This is the core alpha-beta cutoff.
             if alpha >= beta {
                 self.analytics.alpha_beta_cutoffs += 1;
+                // Store killer move if it's a quiet move (not a capture or promotion)
+                // Killer moves help improve move ordering for similar positions at the same depth
+                if !mv.is_capture() && !mv.is_promotion() {
+                    self.add_killer_move(ply, mv);
+                }
                 break;
             }
         }
@@ -364,7 +412,8 @@ impl Searcher {
             if !in_check {
                 moves.retain(|&mv| mv.is_capture() || mv.is_promotion());
             }
-            moves.sort_by_key(|&mv| -Searcher::score_move(mv, state, None));
+            let empty_killers = [None; KILLER_MOVES_PER_PLY];
+            moves.sort_by_key(|&mv| -Searcher::score_move(mv, state, None, &empty_killers));
             moves.len()
         };
 

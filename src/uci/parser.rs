@@ -10,6 +10,7 @@ pub struct GoCommand {
     pub winc: Option<Duration>,
     pub binc: Option<Duration>,
     pub movestogo: Option<u32>,
+    pub infinite: bool,
 }
 
 impl GoCommand {
@@ -22,6 +23,7 @@ impl GoCommand {
             winc: None,
             binc: None,
             movestogo: None,
+            infinite: false,
         }
     }
 }
@@ -143,6 +145,9 @@ impl UCICommand {
                 "movestogo" => {
                     go.movestogo =
                         Self::next_value(&mut tokens).and_then(|value| value.parse::<u32>().ok());
+                }
+                "infinite" => {
+                    go.infinite = true;
                 }
                 _ => {}
             }
@@ -301,6 +306,7 @@ mod tests {
                 winc: None,
                 binc: None,
                 movestogo: None,
+                infinite: false,
             })
         );
     }
@@ -318,6 +324,7 @@ mod tests {
                 winc: None,
                 binc: None,
                 movestogo: None,
+                infinite: false,
             })
         );
     }
@@ -335,6 +342,7 @@ mod tests {
                 winc: None,
                 binc: None,
                 movestogo: None,
+                infinite: false,
             })
         );
     }
@@ -352,6 +360,7 @@ mod tests {
                 winc: Some(Duration::from_millis(5000)),
                 binc: Some(Duration::from_millis(5000)),
                 movestogo: None,
+                infinite: false,
             })
         );
     }
@@ -369,6 +378,7 @@ mod tests {
                 winc: None,
                 binc: None,
                 movestogo: Some(40),
+                infinite: false,
             })
         );
     }
@@ -452,6 +462,7 @@ mod tests {
                 winc: None,
                 binc: None,
                 movestogo: None,
+                infinite: false,
             }))
         );
     }

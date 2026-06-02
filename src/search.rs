@@ -55,6 +55,17 @@ pub struct SearchResult {
     pub analytics: SearchAnalytics,
 }
 
+impl SearchResult {
+    pub fn mate_in(&self) -> Option<i32> {
+        let ply = MATE_SCORE - self.evaluation.abs();
+        if ply <= MAX_PLY as i32 {
+            Some(ply * self.evaluation.signum())
+        } else {
+            None
+        }
+    }
+}
+
 pub struct Searcher {
     move_pool: Vec<Vec<Move>>,
     transposition_table: TranspositionTable,

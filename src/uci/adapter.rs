@@ -45,23 +45,27 @@ impl UCIAdapter {
         let nodes = info.analytics.total_nodes();
         let nps = info.analytics.nodes_per_second();
         let time = info.analytics.elapsed.as_millis();
-        match info.best_move {
-            Some(best_move) => write!(
-                writer,
-                "info depth {} score cp {} time {} nodes {} nps {} pv {}",
-                info.analytics.depth,
-                info.evaluation,
-                time,
-                nodes,
-                nps,
-                best_move.repr_string()
-            ),
-            None => write!(
-                writer,
-                "info depth {} score cp {} time {} nodes {} nps {}",
-                info.analytics.depth, info.evaluation, time, nodes, nps
-            ),
+
+        write!(
+            writer,
+            "info depth {} time {} nodes {} nps {} tbhits 0",
+            info.analytics.depth, time, nodes, nps
+        )?;
+
+        match info.mate_in() {
+            Some(ply) => {
+                // UCI expects moves to mate, not plies until mate, therefore we divide by 2 and round up.
+                let ply_to_mate = ((ply.abs() + 1) / 2) * ply.signum();
+                write!(writer, " score mate {}", ply_to_mate)
+            }
+            None => write!(writer, " score cp {}", info.evaluation),
         }?;
+
+        if let Some(best_move) = info.best_move {
+            write!(writer, " pv {}", best_move.repr_string())?;
+        }
+
+        write!(writer, "\n")?;
 
         Ok(())
     }
@@ -120,7 +124,7 @@ impl UCIAdapter {
         let generation = self.next_generation();
         let generation_token = Arc::clone(&self.search_generation);
         let out = Arc::clone(&self.out);
-        let mut state = self.state;
+        let mut state = self.state.clone();
 
         thread::spawn(move || {
             let mut searcher = Searcher::new();
@@ -133,13 +137,17 @@ impl UCIAdapter {
                 go.movetime,
             );
 
-            let depth = go.depth.unwrap_or(20);
+            let depth = if go.infinite {
+                32
+            } else {
+                go.depth.unwrap_or(32)
+            };
             let result = searcher.search(
                 &mut state,
                 depth,
                 Some(|info: SearchResult| {
                     if let Ok(mut writer) = out.lock() {
-                        let _ = Self::handle_info(info, &mut *writer);
+                        Self::handle_info(info, &mut *writer).unwrap();
                     }
                 }),
             );
@@ -150,7 +158,7 @@ impl UCIAdapter {
                     None => "bestmove 0000".to_string(),
                 };
                 if let Ok(mut writer) = out.lock() {
-                    let _ = writeln!(writer, "{}", msg);
+                    writeln!(writer, "{}", msg).unwrap();
                 }
             }
         });

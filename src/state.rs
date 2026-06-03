@@ -1,6 +1,7 @@
 use crate::attack_table::ATTACK_TABLE;
 use crate::bitboard::*;
 use crate::core::*;
+use crate::move_generator::MoveList;
 use crate::zobrist::ZOBRIST_HASHER;
 
 #[derive(Debug, Clone, Copy)]
@@ -98,7 +99,7 @@ impl GameState {
     }
 
     fn no_moves(&mut self) -> bool {
-        let mut moves = Vec::with_capacity(256);
+        let mut moves = MoveList::default();
         self.generate_valid_moves(&mut moves);
         moves.is_empty()
     }

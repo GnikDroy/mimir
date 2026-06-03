@@ -2,11 +2,12 @@ use std::time::Duration;
 
 use crate::core::*;
 use crate::evaluation::{evaluate, MATE_SCORE};
+use crate::move_generator::MoveList;
 use crate::state::GameState;
 use crate::time_control::TimeControl;
 use crate::transposition_table::{TranspositionEntry, TranspositionFlag, TranspositionTable};
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct SearchAnalytics {
     pub depth: u8,
     pub elapsed: Duration,
@@ -32,22 +33,6 @@ impl SearchAnalytics {
     }
 }
 
-impl Default for SearchAnalytics {
-    fn default() -> Self {
-        Self {
-            depth: 0,
-            elapsed: Duration::from_secs(0),
-            nodes_searched: 0,
-            quiescence_nodes_searched: 0,
-            max_quiescence_depth_reached: 0,
-            alpha_beta_cutoffs: 0,
-            quiescence_alpha_beta_cutoffs: 0,
-            transposition_table_hits: 0,
-            transposition_table_cuts: 0,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy)]
 pub struct SearchResult {
     pub best_move: Option<Move>,
@@ -67,7 +52,7 @@ impl SearchResult {
 }
 
 pub struct Searcher {
-    move_pool: Vec<Vec<Move>>,
+    move_pool: Box<[MoveList; MAX_PLY]>,
     transposition_table: TranspositionTable,
     time_control: TimeControl,
     analytics: SearchAnalytics,
@@ -85,7 +70,7 @@ const QUIESCENCE_NODE_CHECK_INTERVAL: u64 = 128;
 
 impl Searcher {
     pub fn new() -> Self {
-        let move_pool = vec![Vec::with_capacity(256); MAX_PLY]; // Preallocate move storage for each depth
+        let move_pool = Box::new([MoveList::default(); MAX_PLY]);
         let killer_moves = Box::new([[None; KILLER_MOVES_PER_PLY]; MAX_PLY]);
         let history = Box::new([[[0u32; Square::NUM]; Square::NUM]; Color::NUM]);
 

@@ -5,9 +5,9 @@ use std::sync::{
 use std::thread;
 use std::time::Duration;
 
-use crate::core::*;
 use crate::search::{SearchResult, Searcher};
 use crate::state::GameState;
+use crate::{core::*, move_generator::MoveList};
 
 use super::parser::{GoCommand, UCICommand};
 
@@ -169,7 +169,7 @@ impl UCIAdapter {
     }
 
     fn parse_uci_move(&mut self, uci: &str) -> Option<Move> {
-        let mut legal_moves = Vec::with_capacity(256);
+        let mut legal_moves = MoveList::default();
         self.state.generate_valid_moves(&mut legal_moves);
         legal_moves.into_iter().find(|mv| mv.repr_string() == uci)
     }

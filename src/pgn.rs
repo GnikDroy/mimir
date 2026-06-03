@@ -4,6 +4,7 @@ use once_cell::sync::Lazy;
 
 use crate::bitboard::BitBoardMethods;
 use crate::core::*;
+use crate::move_generator::MoveList;
 use crate::state::GameState;
 
 fn pgn_header(result: &str, fen: Option<&str>) -> String {
@@ -61,7 +62,7 @@ fn disambiguate_from(mv: Move, state: &GameState) -> Option<String> {
         None => return None, // Pawns don't need disambiguation
     };
 
-    let mut legal_moves: Vec<Move> = Vec::with_capacity(256);
+    let mut legal_moves = MoveList::default();
     state.clone().generate_valid_moves(&mut legal_moves);
 
     // Check if there's another piece of the same type that can move to the same square
@@ -243,7 +244,7 @@ pub fn uci_to_pgn(uci: &str, fen: Option<&str>) -> String {
         None => GameState::new(),
     };
     let mut move_list: Vec<Move> = Vec::new();
-    let mut legal_moves: Vec<Move> = Vec::with_capacity(256);
+    let mut legal_moves: MoveList = MoveList::default();
 
     for mv_uci in uci.split(' ') {
         legal_moves.clear();

@@ -68,6 +68,8 @@ impl ZobristHasher {
 // If we want to test the ZobristHasher, we should test it against the GameState's hash to ensure they match.
 #[cfg(test)]
 mod tests {
+    use crate::move_generator::MoveList;
+
     use super::*;
 
     #[test]
@@ -98,7 +100,7 @@ mod tests {
     // Gamestate maintains a running Zobrist hash, so if the hash is correct.
     // We compare this to the Zobrist hash of the current state, and if they match,
     // we can be confident that the Zobrist hash is correct in make_move and unmake_move.
-    fn zobrist_perft(state: &mut GameState, depth: u8, moves_list: &mut [Vec<Move>]) {
+    fn zobrist_perft(state: &mut GameState, depth: u8, moves_list: &mut [MoveList]) {
         if depth == 0 {
             return;
         }
@@ -127,7 +129,7 @@ mod tests {
     fn test_zobrist_perft_standard() {
         let mut state = GameState::new();
         let depth: u8 = 5;
-        let mut moves_list = vec![Vec::<Move>::with_capacity(256); depth as usize + 1];
+        let mut moves_list = vec![MoveList::default(); depth as usize + 1];
         zobrist_perft(&mut state, depth, &mut moves_list);
     }
 
@@ -138,7 +140,7 @@ mod tests {
         )
         .unwrap();
         let depth: u8 = 5;
-        let mut moves_list = vec![Vec::<Move>::with_capacity(256); depth as usize + 1];
+        let mut moves_list = vec![MoveList::default(); depth as usize + 1];
         zobrist_perft(&mut state, depth, &mut moves_list);
     }
 
@@ -146,7 +148,7 @@ mod tests {
     fn test_zobrist_perft_endgame() {
         let mut state = GameState::from_fen("8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1").unwrap();
         let depth: u8 = 5;
-        let mut moves_list = vec![Vec::<Move>::with_capacity(256); depth as usize + 1];
+        let mut moves_list = vec![MoveList::default(); depth as usize + 1];
         zobrist_perft(&mut state, depth, &mut moves_list);
     }
 }

@@ -1,12 +1,109 @@
+use std::ops::{Deref, DerefMut};
+
 use crate::attack_table::ATTACK_TABLE;
 use crate::bitboard::{BitBoard, BitBoardMethods};
 use crate::core::*;
 use crate::state::GameState;
 
+const MAX_MOVE_COUNT: usize = 256;
+
+#[derive(Debug, Clone, Copy)]
+pub struct MoveList {
+    pub moves: [Move; MAX_MOVE_COUNT],
+    pub count: usize,
+}
+
+impl Default for MoveList {
+    fn default() -> Self {
+        MoveList {
+            moves: [0; MAX_MOVE_COUNT],
+            count: 0,
+        }
+    }
+}
+
+impl Deref for MoveList {
+    type Target = [Move];
+
+    fn deref(&self) -> &Self::Target {
+        &self.moves[..self.count]
+    }
+}
+
+impl DerefMut for MoveList {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.moves[..self.count]
+    }
+}
+pub struct MoveListIntoIter {
+    list: MoveList,
+    index: usize,
+}
+
+impl Iterator for MoveListIntoIter {
+    type Item = Move;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.index >= self.list.count {
+            None
+        } else {
+            let m = self.list.moves[self.index];
+            self.index += 1;
+            Some(m)
+        }
+    }
+}
+
+impl IntoIterator for MoveList {
+    type Item = Move;
+    type IntoIter = MoveListIntoIter;
+
+    fn into_iter(self) -> Self::IntoIter {
+        MoveListIntoIter {
+            list: self,
+            index: 0,
+        }
+    }
+}
+
+impl MoveList {
+    pub fn push(&mut self, m: Move) {
+        assert!(self.count < self.moves.len());
+        self.moves[self.count] = m;
+        self.count += 1;
+    }
+
+    pub fn clear(&mut self) {
+        self.count = 0;
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.count == 0
+    }
+
+    pub fn retain<F>(&mut self, mut f: F)
+    where
+        F: FnMut(&Move) -> bool,
+    {
+        let mut write = 0;
+
+        for read in 0..self.count {
+            if f(&self.moves[read]) {
+                if write != read {
+                    self.moves[write] = self.moves[read];
+                }
+                write += 1;
+            }
+        }
+
+        self.count = write;
+    }
+}
+
 impl GameState {
     // This function is exposed because engines often use perft to validate move generation and make/unmake logic
     // Stockfish for example has a go perft command that runs perft and prints the results for each move at the root
-    pub fn perft(&mut self, depth: u8, moves_list: &mut [Vec<Move>]) -> u64 {
+    pub fn perft(&mut self, depth: u8, moves_list: &mut [MoveList]) -> u64 {
         if depth == 0 {
             return 1;
         }
@@ -32,7 +129,7 @@ impl GameState {
         count
     }
 
-    pub fn generate_valid_moves(&mut self, moves: &mut Vec<Move>) {
+    pub fn generate_valid_moves(&mut self, moves: &mut MoveList) {
         self.generate_moves(moves);
         moves.retain(|mv: &Move| {
             let undo = self.make_move(*mv);
@@ -42,7 +139,7 @@ impl GameState {
         });
     }
 
-    pub fn generate_moves(&self, mut moves: &mut Vec<Move>) {
+    pub fn generate_moves(&self, mut moves: &mut MoveList) {
         let friendly = self.occupancies[self.side_to_move as usize];
         let occupancy = self.occupancies[2];
 
@@ -113,7 +210,7 @@ impl GameState {
         }
     }
 
-    fn add_castling_moves(&self, from: Square, moves: &mut Vec<Move>) {
+    fn add_castling_moves(&self, from: Square, moves: &mut MoveList) {
         let color = self.side_to_move;
         let enemy = color.opposite();
 
@@ -210,12 +307,12 @@ impl GameState {
 
     /// Generate pawn moves (push, captures, promotions, en passant)
     #[inline(always)]
-    fn add_pawn_moves(&self, from: Square, moves: &mut Vec<Move>) {
+    fn add_pawn_moves(&self, from: Square, moves: &mut MoveList) {
         Self::add_pawn_moves_for_color(self, from, self.side_to_move, moves);
     }
 
     #[inline(always)]
-    fn add_pawn_moves_for_color(&self, from: Square, color: Color, moves: &mut Vec<Move>) {
+    fn add_pawn_moves_for_color(&self, from: Square, color: Color, moves: &mut MoveList) {
         let from_board = BitBoard::on(from);
         let occupancy = self.occupancies[2];
 
@@ -269,7 +366,7 @@ impl GameState {
         to: Square,
         color: Color,
         captured: Option<Piece>,
-        moves: &mut Vec<Move>,
+        moves: &mut MoveList,
     ) {
         if to.is_promotion_square(color) {
             for promo in [
@@ -315,7 +412,7 @@ impl GameState {
         from_piece: Piece,
         targets: BitBoard,
         enemy: &[BitBoard; 6],
-        moves: &mut Vec<Move>,
+        moves: &mut MoveList,
     ) {
         let captures = targets & (enemy[0] | enemy[1] | enemy[2] | enemy[3] | enemy[4] | enemy[5]);
 
@@ -345,6 +442,7 @@ mod tests {
     use crate::attack_table::ATTACK_TABLE;
     use crate::bitboard::*;
     use crate::core::*;
+    use crate::move_generator::MoveList;
     use crate::state::GameState;
     use std::time::Instant;
 
@@ -362,10 +460,10 @@ mod tests {
             return results;
         }
 
-        let mut moves = Vec::with_capacity(256);
+        let mut moves = MoveList::default();
         state.generate_moves(&mut moves);
 
-        let mut moves_list = vec![Vec::<Move>::with_capacity(256); depth as usize + 1];
+        let mut moves_list = vec![MoveList::default(); depth as usize + 1];
         for move_encoded in moves {
             let undo_info = state.make_move(move_encoded);
 
@@ -387,7 +485,7 @@ mod tests {
         let mut state = GameState::from_fen(fen).unwrap();
 
         for (depth, perft_count) in expected_perft.iter().enumerate() {
-            let mut moves_list = vec![Vec::<Move>::with_capacity(256); depth + 1];
+            let mut moves_list = vec![MoveList::default(); depth + 1];
             let start_time = Instant::now();
             let count = state.perft(depth as u8 + 1, &mut moves_list);
             let elapsed = start_time.elapsed();
@@ -434,7 +532,7 @@ mod tests {
     #[test]
     fn starting_position_generates_twenty_white_moves() {
         let state = GameState::new();
-        let mut moves = Vec::with_capacity(256);
+        let mut moves = MoveList::default();
         state.generate_moves(&mut moves);
 
         assert_eq!(moves.len(), 20);
@@ -448,7 +546,7 @@ mod tests {
         set_piece(&mut state, Color::Black, Piece::King, Square::C8);
         set_piece(&mut state, Color::White, Piece::Pawn, Square::E7);
 
-        let mut moves = Vec::with_capacity(256);
+        let mut moves = MoveList::default();
         state.generate_moves(&mut moves);
 
         for promotion in PromotionPiece::all() {
@@ -473,7 +571,7 @@ mod tests {
         set_piece(&mut state, Color::White, Piece::Pawn, Square::E5);
         set_piece(&mut state, Color::Black, Piece::Pawn, Square::D5);
 
-        let mut moves = Vec::with_capacity(256);
+        let mut moves = MoveList::default();
         state.generate_moves(&mut moves);
 
         assert!(moves.contains(&Move::from_capture(
@@ -495,7 +593,7 @@ mod tests {
         set_piece(&mut state, Color::White, Piece::Rook, Square::H1);
         set_piece(&mut state, Color::Black, Piece::King, Square::E8);
 
-        let mut moves = Vec::with_capacity(256);
+        let mut moves = MoveList::default();
         state.generate_moves(&mut moves);
         assert!(moves.contains(&Move::from_castle(
             Square::E1,
@@ -516,7 +614,7 @@ mod tests {
         set_piece(&mut state, Color::Black, Piece::King, Square::E8);
         set_piece(&mut state, Color::Black, Piece::Rook, Square::F8);
 
-        let mut moves = Vec::with_capacity(256);
+        let mut moves = MoveList::default();
         state.generate_moves(&mut moves);
 
         assert!(!moves.contains(&Move::from_castle(

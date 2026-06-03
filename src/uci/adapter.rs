@@ -45,11 +45,15 @@ impl UCIAdapter {
         let nodes = info.analytics.total_nodes();
         let nps = info.analytics.nodes_per_second();
         let time = info.analytics.elapsed.as_millis();
+        let seldepth = info
+            .analytics
+            .max_quiescence_depth_reached
+            .max(info.analytics.depth);
 
         write!(
             writer,
-            "info depth {} time {} nodes {} nps {} tbhits 0",
-            info.analytics.depth, time, nodes, nps
+            "info depth {} seldepth {} time {} nodes {} nps {} tbhits 0",
+            info.analytics.depth, seldepth, time, nodes, nps
         )?;
 
         match info.mate_in() {

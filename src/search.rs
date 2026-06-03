@@ -71,11 +71,13 @@ pub struct Searcher {
     transposition_table: TranspositionTable,
     time_control: TimeControl,
     analytics: SearchAnalytics,
-    killer_moves: Vec<[Option<Move>; 2]>,
+    killer_moves: Box<[[Option<Move>; 2]; MAX_PLY]>,
+    history: Box<[[[u32; Square::NUM]; Square::NUM]; Color::NUM]>,
 }
 
 const MAX_PLY: usize = 64;
 const KILLER_MOVES_PER_PLY: usize = 2;
+const HISTORY_BONUS_MULTIPLIER: u32 = 8;
 
 // Check for timeouts every N nodes in alpha-beta and every M quiescence nodes.
 const NODE_CHECK_INTERVAL: u64 = 256;
@@ -84,13 +86,15 @@ const QUIESCENCE_NODE_CHECK_INTERVAL: u64 = 128;
 impl Searcher {
     pub fn new() -> Self {
         let move_pool = vec![Vec::with_capacity(256); MAX_PLY]; // Preallocate move storage for each depth
-        let killer_moves = vec![[None; KILLER_MOVES_PER_PLY]; MAX_PLY];
+        let killer_moves = Box::new([[None; KILLER_MOVES_PER_PLY]; MAX_PLY]);
+        let history = Box::new([[[0u32; Square::NUM]; Square::NUM]; Color::NUM]);
 
         let time_control = TimeControl::new(Duration::from_mins(1), Duration::from_secs(0));
 
         Searcher {
             move_pool,
             killer_moves,
+            history,
             transposition_table: TranspositionTable::new(),
             analytics: SearchAnalytics::default(),
             time_control: time_control,
@@ -137,16 +141,17 @@ impl Searcher {
     }
 
     /// Simple static move ordering score: promotions highest, then captures (MVV-LVA),
-    /// then castles, double pawn pushes, then quiet moves, and killer moves.
+    /// then castles, double pawn pushes, then quiet moves with history bonus, and killer moves.
     /// all of them are given bonuses from transposition table move if it matches, to ensure we search the tt move first
-    fn score_move(
+    fn score_move_main(
         mv: Move,
-        _state: &GameState,
+        state: &GameState,
         tt_move: Option<Move>,
         killer_moves: &[Option<Move>; KILLER_MOVES_PER_PLY],
+        history: &[[[u32; Square::NUM]; Square::NUM]; Color::NUM],
     ) -> i32 {
         // Material values aligned with `core::Piece` ordering: King, Queen, Rook, Bishop, Knight, Pawn
-        const PIECE_VALUES: [i32; Piece::NUM] = [20000, 900, 500, 330, 320, 100];
+        const PIECE_VALUES: [i32; Piece::NUM] = [20_000, 900, 500, 330, 320, 100];
 
         let tt_bonus = if Some(mv) == tt_move { 1_000_000 } else { 0 };
 
@@ -157,28 +162,49 @@ impl Searcher {
             0
         };
 
+        // Get history bonus for this move. History tracks quiet moves that caused cutoffs.
+        let from = mv.get_from() as usize;
+        let to = mv.get_to() as usize;
+        let history_bonus =
+            (history[state.side_to_move as usize][from][to] / HISTORY_BONUS_MULTIPLIER) as i32;
+
         match mv.get_type() {
-            MoveType::Promotion { .. } => 20000 + tt_bonus,
+            MoveType::Promotion { .. } => 100_000 + tt_bonus,
             MoveType::Capture { .. } => {
                 let captured = mv.get_captured_piece().unwrap_or(Piece::Pawn) as usize;
                 let moved = mv.get_moved_piece() as usize;
                 // MVV-LVA style: prefer capturing high-value pieces with low-value attackers
                 ((PIECE_VALUES[captured] * 100) - (PIECE_VALUES[moved] as i32)) + tt_bonus
             }
-            MoveType::Castle { .. } => 500 + tt_bonus,
-            MoveType::DoublePawnPush => 50 + tt_bonus + killer_bonus,
-            _ => killer_bonus + tt_bonus,
+            _ => history_bonus + killer_bonus + tt_bonus,
+        }
+    }
+
+    /// Simple static move ordering score: promotions highest, then captures (MVV-LVA),
+    /// then castles, double pawn pushes, then quiet moves with history bonus, and killer moves.
+    /// all of them are given bonuses from transposition table move if it matches, to ensure we search the tt move first
+    fn score_move_quiescence(mv: Move, tt_move: Option<Move>) -> i32 {
+        // Material values aligned with `core::Piece` ordering: King, Queen, Rook, Bishop, Knight, Pawn
+        const PIECE_VALUES: [i32; Piece::NUM] = [20_000, 900, 500, 330, 320, 100];
+
+        let tt_bonus = if Some(mv) == tt_move { 1_000_000 } else { 0 };
+
+        match mv.get_type() {
+            MoveType::Promotion { .. } => 100_000 + tt_bonus,
+            MoveType::Capture { .. } => {
+                let captured = mv.get_captured_piece().unwrap_or(Piece::Pawn) as usize;
+                let moved = mv.get_moved_piece() as usize;
+                // MVV-LVA style: prefer capturing high-value pieces with low-value attackers
+                ((PIECE_VALUES[captured] * 100) - (PIECE_VALUES[moved] as i32)) + tt_bonus
+            }
+            _ => tt_bonus,
         }
     }
 
     /// Add a killer move at the given ply. Maintains up to 2 killer moves per ply.
     /// When a new killer move is added, the first one becomes the second and the new one becomes first.
     #[inline]
-    fn add_killer_move(&mut self, ply: usize, mv: Move) {
-        if ply >= MAX_PLY {
-            return;
-        }
-
+    fn update_killer(&mut self, mv: Move, ply: usize) {
         let killers = &mut self.killer_moves[ply];
 
         // Don't add if it's already the primary killer
@@ -191,6 +217,24 @@ impl Searcher {
         killers[0] = Some(mv);
     }
 
+    /// Update history score for a move that caused a beta cutoff.
+    /// History heuristic tracks quiet moves that lead to cutoffs and improves their move ordering.
+    /// The history bonus is scaled and capped to prevent overflow and control its influence.
+    #[inline]
+    fn update_history(&mut self, mv: Move, depth: u8, side: Color) {
+        let from = mv.get_from() as usize;
+        let to = mv.get_to() as usize;
+
+        // Add a bonus based on depth (deeper moves that cause cutoffs are more valuable)
+        let bonus = (depth as u32) * (depth as u32) * HISTORY_BONUS_MULTIPLIER;
+
+        // Cap history values to prevent overflow and unbounded growth
+        const HISTORY_MAX: u32 = u32::MAX / 2;
+        self.history[side as usize][from][to] = self.history[side as usize][from][to]
+            .saturating_add(bonus)
+            .min(HISTORY_MAX);
+    }
+
     /// Iterative deepening search: tries depths 1, 2, 3, ... until time/depth limit
     /// Returns the best move and evaluation found at the deepest completed depth
     pub fn search(
@@ -199,12 +243,11 @@ impl Searcher {
         max_depth: u8,
         report_fn: Option<impl Fn(SearchResult)>,
     ) -> SearchResult {
+        // Clear analytics
         self.analytics = SearchAnalytics::default();
-        // Clear killer moves at the start of a new search
-        for killers in self.killer_moves.iter_mut() {
-            killers[0] = None;
-            killers[1] = None;
-        }
+
+        // Clear killer moves
+        self.killer_moves.fill([None; KILLER_MOVES_PER_PLY]);
 
         let mut best_move = None;
         let mut best_eval = 0i32;
@@ -262,19 +305,20 @@ impl Searcher {
 
         self.analytics.nodes_searched += 1;
 
-        // Periodic timeout check to avoid calling Instant::now() every node.
+        // Timeout check
         if self.analytics.nodes_searched % NODE_CHECK_INTERVAL == 0
             && self.time_control.is_time_up()
         {
             return None;
         }
 
+        // We store these so that we can store in the transposition table later.
         let original_alpha = alpha;
         let original_beta = beta;
-        let tt_entry = self.transposition_table.probe(state.zobrist_hash);
 
         // Check if transposition table has a valid entry for this position and depth,
         // and use it to potentially cut off the search early
+        let tt_entry = self.transposition_table.probe(state.zobrist_hash);
         if let Some(entry) = tt_entry.filter(|entry| entry.depth >= depth) {
             let tt_score = Self::score_from_tt(entry.score, ply);
 
@@ -286,23 +330,24 @@ impl Searcher {
 
             self.analytics.transposition_table_hits += 1;
 
+            // If the tt entry causes a cutoff, we can skip searching this node entirely.
             if alpha >= beta {
                 self.analytics.transposition_table_cuts += 1;
                 return Some((entry.best_move, tt_score));
             }
         }
 
-        // sort moves by heuristic score (captures/promotions first, then tt move if available, then killer moves)
-        // to improve alpha-beta efficiency
+        // We order moves to improve alpha-beta cutoffs.
         let move_count = {
             let moves = &mut self.move_pool[ply];
-
             moves.clear();
             state.generate_valid_moves(moves);
 
             let tt_move = tt_entry.and_then(|entry| entry.best_move);
-            let killer_moves = self.killer_moves[ply];
-            moves.sort_by_key(|&mv| -Searcher::score_move(mv, state, tt_move, &killer_moves));
+            let killer_moves = &self.killer_moves[ply];
+            moves.sort_by_key(|&mv| {
+                -Searcher::score_move_main(mv, state, tt_move, killer_moves, &self.history)
+            });
 
             moves.len()
         };
@@ -312,17 +357,14 @@ impl Searcher {
         for i in 0..move_count {
             let mv = self.move_pool[ply][i];
             let undo_info = state.make_move(mv);
+
             // (alpha, beta) -> (-beta, -alpha) is standard in negamax
-            let eval = match self.alpha_beta(state, depth - 1, ply + 1, -beta, -alpha) {
-                Some((_, eval)) => {
-                    state.unmake_move(mv, &undo_info);
-                    eval
-                }
-                None => {
-                    state.unmake_move(mv, &undo_info);
-                    return None;
-                }
-            };
+            let eval = self.alpha_beta(state, depth - 1, ply + 1, -beta, -alpha);
+            state.unmake_move(mv, &undo_info);
+
+            // If eval is None, it means we ran out of time during the search
+            // otherwise we use the returned evaluation score
+            let eval = eval?.1;
 
             // Core negamax idea. We negate the evaluation score returned.
             // This means each player is maximizing their own score.
@@ -342,10 +384,14 @@ impl Searcher {
             // This is the core alpha-beta cutoff.
             if alpha >= beta {
                 self.analytics.alpha_beta_cutoffs += 1;
-                // Store killer move if it's a quiet move (not a capture or promotion)
-                // Killer moves help improve move ordering for similar positions at the same depth
                 if !mv.is_capture() && !mv.is_promotion() {
-                    self.add_killer_move(ply, mv);
+                    // Store killer moves (per ply) if it's a quiet move
+                    // that cause a cutoff at this depth.
+                    self.update_killer(mv, ply);
+
+                    // History heuristic tracks quiet moves that lead to cutoffs regardless of depth.
+                    // Even a shallow cutoff can indicate a move that is good in general.
+                    self.update_history(mv, depth, state.side_to_move);
                 }
                 break;
             }
@@ -392,7 +438,7 @@ impl Searcher {
             self.analytics.max_quiescence_depth_reached.max(ply as u8);
         self.analytics.quiescence_nodes_searched += 1;
 
-        // Periodic timeout check in quiescence search
+        // Timeout check
         if self.analytics.quiescence_nodes_searched % QUIESCENCE_NODE_CHECK_INTERVAL == 0
             && self.time_control.is_time_up()
         {
@@ -423,11 +469,11 @@ impl Searcher {
             if !in_check {
                 moves.retain(|&mv| mv.is_capture() || mv.is_promotion());
             }
-            let empty_killers = [None; KILLER_MOVES_PER_PLY];
-            moves.sort_by_key(|&mv| -Searcher::score_move(mv, state, None, &empty_killers));
+            moves.sort_by_key(|&mv| -Searcher::score_move_quiescence(mv, None));
             moves.len()
         };
 
+        // TODO: stand_pat should only be done when we are not in check.
         let stand_pat = evaluate(state);
 
         if stand_pat >= beta {
@@ -435,19 +481,23 @@ impl Searcher {
             return Some(beta);
         }
 
-        if stand_pat > alpha {
-            alpha = stand_pat;
-        }
+        alpha = alpha.max(stand_pat);
 
         for i in 0..move_count {
             let mv = self.move_pool[ply][i];
             let undo_info = state.make_move(mv);
+
+            // (alpha, beta) -> (-beta, -alpha) is standard in negamax
             let eval = self.quiescence(state, ply + 1, -beta, -alpha);
-            if eval.is_none() {
-                return None;
-            }
-            let eval = -eval.unwrap();
             state.unmake_move(mv, &undo_info);
+
+            // If eval is None, it means we ran out of time during the search
+            // otherwise we use the returned evaluation score
+            let eval = eval?;
+
+            // Core negamax idea. We negate the evaluation score returned.
+            // This means each player is maximizing their own score.
+            let eval = -eval;
 
             // update alpha.
             // alpha-beta on negamax, unlike minimax doesn't require updating beta.

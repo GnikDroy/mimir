@@ -279,11 +279,11 @@ impl GameState {
             self.fullmove_number += 1;
         }
 
-        self.halfmove_clock += if moving_piece == Piece::Pawn || move_encoded.is_capture() {
-            0
+        if moving_piece == Piece::Pawn || move_encoded.is_capture() {
+            self.halfmove_clock = 0;
         } else {
-            1
-        };
+            self.halfmove_clock += 1;
+        }
 
         // store updated hash
         self.zobrist_hash = key;

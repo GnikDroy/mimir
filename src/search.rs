@@ -56,8 +56,8 @@ pub struct Searcher {
     transposition_table: TranspositionTable,
     time_control: TimeControl,
     analytics: SearchAnalytics,
-    killer_moves: Box<[[Option<Move>; 2]; MAX_PLY]>,
-    history: Box<[[[u32; Square::NUM]; Square::NUM]; Color::NUM]>,
+    killer_moves: Box<[[Move; 2]; MAX_PLY]>,
+    history: Box<[[[Move; Square::NUM]; Square::NUM]; Color::NUM]>,
 }
 
 const MAX_PLY: usize = 64;
@@ -71,7 +71,7 @@ const QUIESCENCE_NODE_CHECK_INTERVAL: u64 = 128;
 impl Searcher {
     pub fn new() -> Self {
         let move_pool = Box::new([MoveList::default(); MAX_PLY]);
-        let killer_moves = Box::new([[None; KILLER_MOVES_PER_PLY]; MAX_PLY]);
+        let killer_moves = Box::new([[0u32; KILLER_MOVES_PER_PLY]; MAX_PLY]);
         let history = Box::new([[[0u32; Square::NUM]; Square::NUM]; Color::NUM]);
 
         let time_control = TimeControl::new(Duration::from_mins(1), Duration::from_secs(0));
@@ -132,8 +132,8 @@ impl Searcher {
         mv: Move,
         state: &GameState,
         tt_move: Option<Move>,
-        killer_moves: &[Option<Move>; KILLER_MOVES_PER_PLY],
-        history: &[[[u32; Square::NUM]; Square::NUM]; Color::NUM],
+        killer_moves: &[Move; KILLER_MOVES_PER_PLY],
+        history: &[[[Move; Square::NUM]; Square::NUM]; Color::NUM],
     ) -> i32 {
         // Material values aligned with `core::Piece` ordering: King, Queen, Rook, Bishop, Knight, Pawn
         const PIECE_VALUES: [i32; Piece::NUM] = [20_000, 900, 500, 330, 320, 100];
@@ -141,11 +141,7 @@ impl Searcher {
         let tt_bonus = if Some(mv) == tt_move { 1_000_000 } else { 0 };
 
         // Check if move is a killer move (quiet move that caused cutoff at this depth)
-        let killer_bonus = if killer_moves.contains(&Some(mv)) {
-            9_000
-        } else {
-            0
-        };
+        let killer_bonus = if killer_moves.contains(&mv) { 9_000 } else { 0 };
 
         // Get history bonus for this move. History tracks quiet moves that caused cutoffs.
         let from = mv.get_from() as usize;
@@ -193,13 +189,13 @@ impl Searcher {
         let killers = &mut self.killer_moves[ply];
 
         // Don't add if it's already the primary killer
-        if killers[0] == Some(mv) {
+        if killers[0] == mv {
             return;
         }
 
         // Shift and add new killer
         killers[1] = killers[0];
-        killers[0] = Some(mv);
+        killers[0] = mv;
     }
 
     /// Update history score for a move that caused a beta cutoff.
@@ -232,7 +228,7 @@ impl Searcher {
         self.analytics = SearchAnalytics::default();
 
         // Clear killer moves
-        self.killer_moves.fill([None; KILLER_MOVES_PER_PLY]);
+        self.killer_moves.fill([0u32; KILLER_MOVES_PER_PLY]);
 
         let mut best_move = None;
         let mut best_eval = 0i32;

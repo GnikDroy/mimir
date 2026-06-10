@@ -2,7 +2,7 @@ use crate::attack_table::ATTACK_TABLE;
 use crate::bitboard::*;
 use crate::core::*;
 use crate::move_generator::MoveList;
-use crate::zobrist::ZOBRIST_HASHER;
+use crate::zobrist::{ZobristHash, ZOBRIST_HASHER};
 
 #[derive(Debug, Clone, Copy)]
 pub struct UndoInfo {
@@ -24,7 +24,7 @@ pub struct GameState {
     pub en_passant: Option<Square>,
     pub halfmove_clock: u8,
     pub fullmove_number: u16,
-    pub zobrist_hash: u64,
+    pub zobrist_hash: ZobristHash,
 }
 
 impl GameState {

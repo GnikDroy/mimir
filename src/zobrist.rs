@@ -1,11 +1,13 @@
 use crate::{core::*, BitBoardMethods, GameState};
 use rand::prelude::*;
 
+pub type ZobristHash = u64;
+
 pub struct ZobristHasher {
-    pub square: [[[u64; Square::NUM]; Piece::NUM]; Color::NUM],
-    pub side_is_black: u64,
-    pub castling_rights: [u64; 16],
-    pub en_passant: [u64; Square::NUM],
+    pub square: [[[ZobristHash; Square::NUM]; Piece::NUM]; Color::NUM],
+    pub side_is_black: ZobristHash,
+    pub castling_rights: [ZobristHash; 16],
+    pub en_passant: [ZobristHash; Square::NUM],
 }
 
 pub static ZOBRIST_HASHER: once_cell::sync::Lazy<ZobristHasher> =
@@ -30,7 +32,7 @@ impl ZobristHasher {
         }
     }
 
-    pub fn hash(&self, state: &GameState) -> u64 {
+    pub fn hash(&self, state: &GameState) -> ZobristHash {
         let mut key = 0;
 
         state

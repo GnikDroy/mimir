@@ -348,7 +348,7 @@ mod tests {
     use crate::core::*;
 
     #[test]
-    fn attack_sliders_degenerates() {
+    fn test_attack_sliders_degenerates() {
         for square in Square::all() {
             let board = BitBoard::on(square);
             for slider in [AttackTable::attack_rook, AttackTable::attack_bishop] {
@@ -400,7 +400,7 @@ mod tests {
     }
 
     #[test]
-    fn attack_king() {
+    fn test_attack_king() {
         attack_simple_generic(
             AttackTable::attack_king,
             BitBoard::on(Square::E4),
@@ -448,7 +448,7 @@ mod tests {
     }
 
     #[test]
-    fn attack_knight() {
+    fn test_attack_knight() {
         attack_simple_generic(
             AttackTable::attack_knight,
             BitBoard::on(Square::E4),
@@ -496,7 +496,7 @@ mod tests {
     }
 
     #[test]
-    fn attack_pawn() {
+    fn test_attack_pawn() {
         let attack_simple_generic =
             |generator: fn(BitBoard) -> BitBoard, board: BitBoard, expected: BitBoard| {
                 let attacks = generator(board);
@@ -553,7 +553,7 @@ mod tests {
     }
 
     #[test]
-    fn slide_north_test() {
+    fn test_slide_north() {
         let board = BitBoard::on(Square::E4);
         let result = AttackTable::slide_north(board, BitBoard::EMPTY);
         assert_eq!(
@@ -587,7 +587,7 @@ mod tests {
     }
 
     #[test]
-    fn slide_south_test() {
+    fn test_slide_south() {
         let board = BitBoard::on(Square::E4);
         let result = AttackTable::slide_south(board, BitBoard::EMPTY);
         assert_eq!(
@@ -622,7 +622,7 @@ mod tests {
     }
 
     #[test]
-    fn slide_east_test() {
+    fn test_slide_east() {
         let board = BitBoard::on(Square::E4);
         let result = AttackTable::slide_east(board, BitBoard::EMPTY);
         assert_eq!(
@@ -656,7 +656,7 @@ mod tests {
     }
 
     #[test]
-    fn slide_west_test() {
+    fn test_slide_west() {
         let board = BitBoard::on(Square::E4);
         let result = AttackTable::slide_west(board, BitBoard::EMPTY);
         assert_eq!(
@@ -690,7 +690,7 @@ mod tests {
     }
 
     #[test]
-    fn slide_north_east_test() {
+    fn test_slide_north_east() {
         let board = BitBoard::on(Square::E4);
         let result = AttackTable::slide_north_east(board, BitBoard::EMPTY);
         assert_eq!(
@@ -724,7 +724,7 @@ mod tests {
     }
 
     #[test]
-    fn slide_north_west_test() {
+    fn test_slide_north_west() {
         let board = BitBoard::on(Square::E4);
         let result = AttackTable::slide_north_west(board, BitBoard::EMPTY);
         assert_eq!(
@@ -758,7 +758,7 @@ mod tests {
     }
 
     #[test]
-    fn slide_south_east_test() {
+    fn test_slide_south_east() {
         let board = BitBoard::on(Square::E4);
         let result = AttackTable::slide_south_east(board, BitBoard::EMPTY);
         assert_eq!(
@@ -792,7 +792,7 @@ mod tests {
     }
 
     #[test]
-    fn slide_south_west_test() {
+    fn test_slide_south_west() {
         let board = BitBoard::on(Square::E4);
         let result = AttackTable::slide_south_west(board, BitBoard::EMPTY);
         assert_eq!(
@@ -826,7 +826,7 @@ mod tests {
     }
 
     #[test]
-    fn attack_bishop() {
+    fn test_attack_bishop() {
         attack_slider_generic(
             AttackTable::attack_bishop,
             BitBoard::on(Square::E4),
@@ -877,7 +877,7 @@ mod tests {
     }
 
     #[test]
-    fn attack_rook() {
+    fn test_attack_rook() {
         attack_slider_generic(
             AttackTable::attack_rook,
             BitBoard::on(Square::E4),

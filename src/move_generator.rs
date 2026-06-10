@@ -530,7 +530,7 @@ mod tests {
     }
 
     #[test]
-    fn starting_position_generates_twenty_white_moves() {
+    fn test_starting_position_generates_twenty_white_moves() {
         let state = GameState::new();
         let mut moves = MoveList::default();
         state.generate_moves(&mut moves);
@@ -539,7 +539,7 @@ mod tests {
     }
 
     #[test]
-    fn pawn_promotions_generate_all_promotion_moves() {
+    fn test_pawn_promotions_generate_all_promotion_moves() {
         let mut state = GameState::empty();
         state.side_to_move = Color::White;
         set_piece(&mut state, Color::White, Piece::King, Square::E1);
@@ -561,7 +561,7 @@ mod tests {
     }
 
     #[test]
-    fn en_passant_move_is_generated() {
+    fn test_en_passant_move_is_generated() {
         let mut state = GameState::empty();
         state.side_to_move = Color::White;
         state.en_passant = Some(Square::D6);
@@ -584,7 +584,7 @@ mod tests {
     }
 
     #[test]
-    fn castling_is_generated_when_path_is_clear_and_not_attacked() {
+    fn test_castling_is_generated_when_path_is_clear_and_not_attacked() {
         let mut state = GameState::empty();
         state.side_to_move = Color::White;
         state.castling_rights = 0b0001;
@@ -604,7 +604,7 @@ mod tests {
     }
 
     #[test]
-    fn castling_is_blocked_when_path_is_attacked() {
+    fn test_castling_is_blocked_when_path_is_attacked() {
         let mut state = GameState::empty();
         state.side_to_move = Color::White;
         state.castling_rights = 0b0001;
@@ -626,7 +626,7 @@ mod tests {
     }
 
     #[test]
-    fn en_passant_make_and_unmake_restores_state() {
+    fn test_en_passant_make_and_unmake_restores_state() {
         let mut state = GameState::empty();
         state.side_to_move = Color::White;
         state.en_passant = Some(Square::D6);
@@ -645,7 +645,7 @@ mod tests {
     }
 
     #[test]
-    fn castling_make_and_unmake_restores_state() {
+    fn test_castling_make_and_unmake_restores_state() {
         let mut state = GameState::empty();
         state.side_to_move = Color::White;
         state.castling_rights = 0b0001;
@@ -663,7 +663,7 @@ mod tests {
     }
 
     #[test]
-    fn promotion_make_and_unmake_restores_state() {
+    fn test_promotion_make_and_unmake_restores_state() {
         let mut state = GameState::empty();
         state.side_to_move = Color::White;
 
@@ -686,7 +686,7 @@ mod tests {
     }
 
     #[test]
-    fn starting_position_perft_matches_known_values() {
+    fn test_starting_position_perft_matches_known_values() {
         assert_perft_case(
             "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
             &[20, 400, 8902, 197281, 4865609, 119060324],
@@ -694,7 +694,7 @@ mod tests {
     }
 
     #[test]
-    fn complex_middle_game_perft_matches_known_values() {
+    fn test_complex_middle_game_perft_matches_known_values() {
         assert_perft_case(
             "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1",
             &[48, 2039, 97862, 4085603, 193690690],
@@ -702,7 +702,7 @@ mod tests {
     }
 
     #[test]
-    fn endgame_perft_matches_known_values() {
+    fn test_endgame_perft_matches_known_values() {
         assert_perft_case(
             "8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1",
             &[14, 191, 2812, 43238, 674624, 11030083, 178633661],
@@ -710,7 +710,7 @@ mod tests {
     }
 
     #[test]
-    fn divide_output_matches_depth_two_total() {
+    fn test_divide_output_matches_depth_two_total() {
         let mut state =
             GameState::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1")
                 .unwrap();

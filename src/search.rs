@@ -6,6 +6,7 @@ use crate::move_generator::MoveList;
 use crate::state::GameState;
 use crate::time_control::TimeControl;
 use crate::transposition_table::{TranspositionEntry, TranspositionFlag, TranspositionTable};
+use crate::zobrist::ZobristHash;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SearchAnalytics {
@@ -53,6 +54,7 @@ impl SearchResult {
 
 pub struct Searcher {
     move_pool: Box<[MoveList; MAX_PLY]>,
+    position_history: Vec<ZobristHash>,
     transposition_table: TranspositionTable,
     time_control: TimeControl,
     analytics: SearchAnalytics,
@@ -78,12 +80,52 @@ impl Searcher {
 
         Searcher {
             move_pool,
+            position_history: Vec::with_capacity(256),
             killer_moves,
             history,
             transposition_table: TranspositionTable::new(),
             analytics: SearchAnalytics::default(),
             time_control: time_control,
         }
+    }
+
+    /// Detect repetition: returns true if `hash` matches any position
+    /// in `position_history` within reach of the current reversible-move
+    /// window.
+    ///
+    /// Convention: `position_history` contains the parent states leading
+    /// to the current state; the current state's hash is NOT in the
+    /// stack.
+    ///
+    /// `halfmove_clock` is a safe upper bound on lookback — captures,
+    /// pawn moves, and castling all alter the zobrist hash in a way no
+    /// prior position can match, so positions before any such move
+    /// cannot be a repetition. (Castling doesn't reset `halfmove_clock`,
+    /// so this bound is loose rather than tight, but that's harmless.)
+    ///
+    /// Only same-side-to-move positions can match, so we step back by 2.
+    /// The minimum cycle length is 4 plies (each side moves and moves
+    /// back), so the closest viable match is at index `n - 4`.
+    #[inline]
+    fn is_repetition(&self, hash: ZobristHash, halfmove_clock: u8) -> bool {
+        let n = self.position_history.len();
+        let reversible = halfmove_clock as usize;
+        if reversible < 4 || n < 4 {
+            return false;
+        }
+        // Earliest index reachable without crossing an irreversible move.
+        let earliest = n.saturating_sub(reversible);
+        let mut i = n - 4;
+        loop {
+            if self.position_history[i] == hash {
+                return true;
+            }
+            if i < earliest + 2 {
+                break;
+            }
+            i -= 2;
+        }
+        false
     }
 
     pub fn update_clock(
@@ -230,6 +272,10 @@ impl Searcher {
         // Clear killer moves
         self.killer_moves.fill([0u32; KILLER_MOVES_PER_PLY]);
 
+        // Reset position history: repetition detection only considers
+        // positions visited within this search tree.
+        self.position_history.clear();
+
         let mut best_move = None;
         let mut best_eval = 0i32;
 
@@ -278,6 +324,15 @@ impl Searcher {
         mut alpha: i32,
         mut beta: i32,
     ) -> Option<(Option<Move>, i32)> {
+        // Draw detection: 50-move rule and repetition.
+        // Only at ply > 0 so the root still produces a best move
+        if ply > 0
+            && (state.halfmove_clock >= 100
+                || self.is_repetition(state.zobrist_hash, state.halfmove_clock))
+        {
+            return Some((None, 0));
+        }
+
         if depth == 0 {
             return self
                 .quiescence(state, ply, alpha, beta)
@@ -337,11 +392,14 @@ impl Searcher {
         let mut best_eval = i32::MIN / 2;
         for i in 0..move_count {
             let mv = self.move_pool[ply][i];
+            self.position_history.push(state.zobrist_hash);
             let undo_info = state.make_move(mv);
 
             // (alpha, beta) -> (-beta, -alpha) is standard in negamax
             let eval = self.alpha_beta(state, depth - 1, ply + 1, -beta, -alpha);
+
             state.unmake_move(mv, &undo_info);
+            self.position_history.pop();
 
             // If eval is None, it means we ran out of time during the search
             // otherwise we use the returned evaluation score
@@ -442,9 +500,20 @@ impl Searcher {
             }
         }
 
+        // Draw detection 50-move rule and repetition.
+        // Quiescence is normally only captures (which reset halfmove_clock)
+        // but check evasions can include quiet moves, so the check still matters.
+        if state.halfmove_clock >= 100
+            || self.is_repetition(state.zobrist_hash, state.halfmove_clock)
+        {
+            return Some(0);
+        }
+
+
+        let in_check = state.is_in_check(state.side_to_move);
+
         let move_count = {
             let moves = &mut self.move_pool[ply];
-            let in_check = state.is_in_check(state.side_to_move);
             // only filter captures/promotions if not in check
             // otherwise we might miss important evasions
             if !in_check {
@@ -454,23 +523,26 @@ impl Searcher {
             moves.len()
         };
 
-        // TODO: stand_pat should only be done when we are not in check.
-        let stand_pat = evaluate(state);
-
-        if stand_pat >= beta {
-            self.analytics.quiescence_alpha_beta_cutoffs += 1;
-            return Some(beta);
+        // Stand-pat is only valid when not in check
+        if !in_check {
+            let stand_pat = evaluate(state);
+            if stand_pat >= beta {
+                self.analytics.quiescence_alpha_beta_cutoffs += 1;
+                return Some(beta);
+            }
+            alpha = alpha.max(stand_pat);
         }
-
-        alpha = alpha.max(stand_pat);
 
         for i in 0..move_count {
             let mv = self.move_pool[ply][i];
+            self.position_history.push(state.zobrist_hash);
             let undo_info = state.make_move(mv);
 
             // (alpha, beta) -> (-beta, -alpha) is standard in negamax
             let eval = self.quiescence(state, ply + 1, -beta, -alpha);
+
             state.unmake_move(mv, &undo_info);
+            self.position_history.pop();
 
             // If eval is None, it means we ran out of time during the search
             // otherwise we use the returned evaluation score
@@ -574,5 +646,126 @@ mod tests {
         let state = GameState::from_fen("4k1r1/R6p/4Nb2/4n3/6Pq/2P4P/3Q3K/5R2 w - - 2 2").unwrap();
         let best_moves_expected = ["d2d8", "f6d8", "f1f8", "g8f8", "e6g7"];
         assert_move_sequence(state, &best_moves_expected, 5);
+    }
+
+    fn play_moves(state: &mut GameState, uci_moves: &[&str]) -> Vec<ZobristHash> {
+        let mut history = Vec::with_capacity(uci_moves.len());
+        for &uci in uci_moves {
+            let mut moves = MoveList::default();
+            state.generate_valid_moves(&mut moves);
+            let mv = moves
+                .into_iter()
+                .find(|m| m.repr_string() == uci)
+                .unwrap_or_else(|| panic!("illegal move {uci}"));
+            history.push(state.zobrist_hash);
+            state.make_move(mv);
+        }
+        history
+    }
+
+    #[test]
+    fn test_is_repetition_detects_match_at_minimum_cycle() {
+        // Mirror knight moves out and back: position after 4 plies equals start.
+        let mut state = GameState::new();
+        let history = play_moves(&mut state, &["b1c3", "b8c6", "c3b1", "c6b8"]);
+        let mut searcher = Searcher::new();
+        searcher.position_history = history;
+        assert!(searcher.is_repetition(state.zobrist_hash, state.halfmove_clock));
+    }
+
+    #[test]
+    fn test_is_repetition_no_match() {
+        // Four distinct development moves: current position is novel.
+        let mut state = GameState::new();
+        let history = play_moves(&mut state, &["e2e4", "e7e5", "g1f3", "g8f6"]);
+        let mut searcher = Searcher::new();
+        searcher.position_history = history;
+        assert!(!searcher.is_repetition(state.zobrist_hash, 100));
+    }
+
+    #[test]
+    fn test_is_repetition_too_few_entries() {
+        // Less than 4 entries: a 4-ply cycle is impossible.
+        let mut state = GameState::new();
+        let history = play_moves(&mut state, &["b1c3", "b8c6", "c3b1"]);
+        let mut searcher = Searcher::new();
+        searcher.position_history = history;
+        assert!(!searcher.is_repetition(state.zobrist_hash, 100));
+    }
+
+    #[test]
+    fn test_is_repetition_short_circuits_below_4_halfmoves() {
+        // A real 4-ply cycle is present, but halfmove_clock < 4 short-circuits.
+        let mut state = GameState::new();
+        let history = play_moves(&mut state, &["b1c3", "b8c6", "c3b1", "c6b8"]);
+        let mut searcher = Searcher::new();
+        searcher.position_history = history;
+        assert!(!searcher.is_repetition(state.zobrist_hash, 3));
+    }
+
+    #[test]
+    fn test_is_repetition_bounded_by_halfmove_clock() {
+        // 8-ply cycle: both pairs of knights go out and come back.
+        // No 2/4/6-ply prefix matches the starting position.
+        let mut state = GameState::new();
+        let history = play_moves(
+            &mut state,
+            &[
+                "b1c3", "b8c6", "g1f3", "g8f6", "c3b1", "c6b8", "f3g1", "f6g8",
+            ],
+        );
+        let mut searcher = Searcher::new();
+        searcher.position_history = history;
+        // halfmove_clock=4 only looks back 4 plies, missing the 8-ply match.
+        assert!(!searcher.is_repetition(state.zobrist_hash, 4));
+        // The real halfmove_clock (=8) reaches the match.
+        assert!(searcher.is_repetition(state.zobrist_hash, state.halfmove_clock));
+    }
+
+    #[test]
+    fn test_is_repetition_detects_longer_cycle() {
+        // King triangulation: each side returns home after 3 moves (6 plies).
+        // Knights can't return in 3 moves (color parity), so we use bare-king
+        // positions — no castling rights or en passant to taint the hash.
+        let mut state = GameState::from_fen("4k3/8/8/8/8/8/8/4K3 w - - 0 1").unwrap();
+        let history = play_moves(
+            &mut state,
+            &["e1d1", "e8d8", "d1e2", "d8e7", "e2e1", "e7e8"],
+        );
+        let mut searcher = Searcher::new();
+        searcher.position_history = history;
+        assert!(searcher.is_repetition(state.zobrist_hash, state.halfmove_clock));
+    }
+
+    #[test]
+    fn test_search_fifty_move_rule_returns_zero() {
+        // K+R vs K is normally winning for White, but with halfmove_clock=99
+        // every legal first move (all non-capture, non-pawn) pushes the clock
+        // to 100. At depth >= 1, every child node hits the 50-move draw check
+        // and returns 0, which propagates back to the root.
+        let mut state = GameState::from_fen("4k3/8/8/8/8/8/8/R3K3 w - - 99 50").unwrap();
+        let mut searcher = Searcher::new();
+        let result = searcher.search(&mut state, 3, None::<fn(SearchResult)>);
+        assert_eq!(result.evaluation, 0);
+    }
+
+    #[test]
+    fn test_search_finds_forced_repetition_draw() {
+        // White is down significant material but the only drawing line is a forced
+        // perpetual starting with a bishop sacrifice:
+        //   1. Bxa7+ Kxa7 2. Qa6+ Kb8 3. Qb5+ Ka8 4. Qa6+ (cycle to position after 2... Kb8).
+        // The cycle ends at ply 8, which is reached via the in-check quiescence
+        // evasion at ply 7. The stand-pat suppression while in check is what
+        // lets quiescence see the repetition instead of cutting off on the static
+        // material score.
+        let mut state =
+            GameState::from_fen("1krqr3/p1p2n2/2Q3b1/p3n3/1b6/8/4BB2/5K2 w - - 0 1").unwrap();
+        let mut searcher = Searcher::new();
+        let result = searcher.search(&mut state, 7, None::<fn(SearchResult)>);
+        assert_eq!(result.evaluation, 0);
+        assert_eq!(
+            result.best_move.map(|m| m.repr_string()),
+            Some("f2a7".to_string())
+        );
     }
 }

@@ -16,6 +16,7 @@ pub mod pgn;
 pub mod evaluation;
 pub mod move_generator;
 pub mod search;
+pub mod stack_vec;
 pub mod time_control;
 pub mod transposition_table;
 pub mod uci;

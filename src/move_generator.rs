@@ -1,104 +1,12 @@
-use std::ops::{Deref, DerefMut};
-
 use crate::attack_table::ATTACK_TABLE;
 use crate::bitboard::{BitBoard, BitBoardMethods};
 use crate::core::*;
+use crate::stack_vec::StackVec;
 use crate::state::GameState;
 
 const MAX_MOVE_COUNT: usize = 256;
 
-#[derive(Debug, Clone, Copy)]
-pub struct MoveList {
-    pub moves: [Move; MAX_MOVE_COUNT],
-    pub count: usize,
-}
-
-impl Default for MoveList {
-    fn default() -> Self {
-        MoveList {
-            moves: [0; MAX_MOVE_COUNT],
-            count: 0,
-        }
-    }
-}
-
-impl Deref for MoveList {
-    type Target = [Move];
-
-    fn deref(&self) -> &Self::Target {
-        &self.moves[..self.count]
-    }
-}
-
-impl DerefMut for MoveList {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.moves[..self.count]
-    }
-}
-pub struct MoveListIntoIter {
-    list: MoveList,
-    index: usize,
-}
-
-impl Iterator for MoveListIntoIter {
-    type Item = Move;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.index >= self.list.count {
-            None
-        } else {
-            let m = self.list.moves[self.index];
-            self.index += 1;
-            Some(m)
-        }
-    }
-}
-
-impl IntoIterator for MoveList {
-    type Item = Move;
-    type IntoIter = MoveListIntoIter;
-
-    fn into_iter(self) -> Self::IntoIter {
-        MoveListIntoIter {
-            list: self,
-            index: 0,
-        }
-    }
-}
-
-impl MoveList {
-    pub fn push(&mut self, m: Move) {
-        assert!(self.count < self.moves.len());
-        self.moves[self.count] = m;
-        self.count += 1;
-    }
-
-    pub fn clear(&mut self) {
-        self.count = 0;
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.count == 0
-    }
-
-    pub fn retain<F>(&mut self, mut f: F)
-    where
-        F: FnMut(&Move) -> bool,
-    {
-        let mut write = 0;
-
-        for read in 0..self.count {
-            if f(&self.moves[read]) {
-                if write != read {
-                    self.moves[write] = self.moves[read];
-                }
-                write += 1;
-            }
-        }
-
-        self.count = write;
-    }
-}
+pub type MoveList = StackVec<Move, MAX_MOVE_COUNT>;
 
 impl GameState {
     // This function is exposed because engines often use perft to validate move generation and make/unmake logic

@@ -3,6 +3,7 @@ use std::time::Duration;
 use crate::core::*;
 use crate::evaluation::{evaluate, MATE_SCORE};
 use crate::move_generator::MoveList;
+use crate::stack_vec::StackVec;
 use crate::state::GameState;
 use crate::time_control::TimeControl;
 use crate::transposition_table::{TranspositionEntry, TranspositionFlag, TranspositionTable};
@@ -52,9 +53,11 @@ impl SearchResult {
     }
 }
 
+pub type ZobristHashList = StackVec<ZobristHash, MAX_PLY>;
+
 pub struct Searcher {
     move_pool: Box<[MoveList; MAX_PLY]>,
-    position_history: Vec<ZobristHash>,
+    position_history: Box<ZobristHashList>,
     transposition_table: TranspositionTable,
     time_control: TimeControl,
     analytics: SearchAnalytics,
@@ -80,7 +83,7 @@ impl Searcher {
 
         Searcher {
             move_pool,
-            position_history: Vec::with_capacity(256),
+            position_history: Box::new(ZobristHashList::default()),
             killer_moves,
             history,
             transposition_table: TranspositionTable::new(),
@@ -653,8 +656,8 @@ mod tests {
         assert_move_sequence(state, &best_moves_expected, 5);
     }
 
-    fn play_moves(state: &mut GameState, uci_moves: &[&str]) -> Vec<ZobristHash> {
-        let mut history = Vec::with_capacity(uci_moves.len());
+    fn play_moves(state: &mut GameState, uci_moves: &[&str]) -> Box<ZobristHashList> {
+        let mut history = Box::new(ZobristHashList::default());
         for &uci in uci_moves {
             let mut moves = MoveList::default();
             state.generate_valid_moves(&mut moves);

@@ -139,7 +139,7 @@ impl GameState {
         });
     }
 
-    pub fn generate_moves(&self, mut moves: &mut MoveList) {
+    pub fn generate_moves(&self, moves: &mut MoveList) {
         let friendly = self.occupancies[self.side_to_move as usize];
         let occupancy = self.occupancies[2];
 
@@ -149,15 +149,15 @@ impl GameState {
             let enemy = &self.pieces[self.side_to_move.opposite() as usize];
             for from in pieces.iter() {
                 match piece {
-                    Piece::Pawn => Self::add_pawn_moves(self, from, &mut moves),
+                    Piece::Pawn => Self::add_pawn_moves(self, from, moves),
                     Piece::King => {
                         let attacks = ATTACK_TABLE.get_king(from);
                         Self::add_attack_moves(
                             from,
                             Piece::King,
                             attacks & !friendly,
-                            &enemy,
-                            &mut moves,
+                            enemy,
+                            moves,
                         );
                     }
                     Piece::Knight => {
@@ -166,8 +166,8 @@ impl GameState {
                             from,
                             Piece::Knight,
                             attacks & !friendly,
-                            &enemy,
-                            &mut moves,
+                            enemy,
+                            moves,
                         );
                     }
                     Piece::Bishop => {
@@ -176,8 +176,8 @@ impl GameState {
                             from,
                             Piece::Bishop,
                             attacks & !friendly,
-                            &enemy,
-                            &mut moves,
+                            enemy,
+                            moves,
                         );
                     }
                     Piece::Rook => {
@@ -186,8 +186,8 @@ impl GameState {
                             from,
                             Piece::Rook,
                             attacks & !friendly,
-                            &enemy,
-                            &mut moves,
+                            enemy,
+                            moves,
                         );
                     }
                     Piece::Queen => {
@@ -196,15 +196,15 @@ impl GameState {
                             from,
                             Piece::Queen,
                             attacks & !friendly,
-                            &enemy,
-                            &mut moves,
+                            enemy,
+                            moves,
                         );
                     }
                 }
 
                 // castling moves (only for king)
                 if piece == Piece::King {
-                    self.add_castling_moves(from, &mut moves);
+                    self.add_castling_moves(from, moves);
                 }
             }
         }

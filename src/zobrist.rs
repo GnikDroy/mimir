@@ -11,7 +11,7 @@ pub struct ZobristHasher {
 }
 
 pub static ZOBRIST_HASHER: once_cell::sync::Lazy<ZobristHasher> =
-    once_cell::sync::Lazy::new(|| ZobristHasher::new());
+    once_cell::sync::Lazy::new(ZobristHasher::new);
 
 impl ZobristHasher {
     fn new() -> ZobristHasher {

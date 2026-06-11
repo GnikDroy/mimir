@@ -85,7 +85,7 @@ impl Searcher {
             history,
             transposition_table: TranspositionTable::new(),
             analytics: SearchAnalytics::default(),
-            time_control: time_control,
+            time_control,
         }
     }
 
@@ -197,7 +197,7 @@ impl Searcher {
                 let captured = mv.get_captured_piece().unwrap_or(Piece::Pawn) as usize;
                 let moved = mv.get_moved_piece() as usize;
                 // MVV-LVA style: prefer capturing high-value pieces with low-value attackers
-                ((PIECE_VALUES[captured] * 100) - (PIECE_VALUES[moved] as i32)) + tt_bonus
+                ((PIECE_VALUES[captured] * 100) - PIECE_VALUES[moved]) + tt_bonus
             }
             _ => history_bonus + killer_bonus + tt_bonus,
         }
@@ -218,7 +218,7 @@ impl Searcher {
                 let captured = mv.get_captured_piece().unwrap_or(Piece::Pawn) as usize;
                 let moved = mv.get_moved_piece() as usize;
                 // MVV-LVA style: prefer capturing high-value pieces with low-value attackers
-                ((PIECE_VALUES[captured] * 100) - (PIECE_VALUES[moved] as i32)) + tt_bonus
+                ((PIECE_VALUES[captured] * 100) - PIECE_VALUES[moved]) + tt_bonus
             }
             _ => tt_bonus,
         }
@@ -294,13 +294,13 @@ impl Searcher {
 
             // report info after each completed depth, if a reporting function is provided
             self.analytics.elapsed = self.time_control.get_elapsed();
-            report_fn.as_ref().map(|f| {
+            if let Some(f) = report_fn.as_ref() {
                 f(SearchResult {
                     best_move,
                     evaluation: best_eval,
                     analytics: self.analytics,
                 })
-            });
+            }
 
             // We ran out of time, so stop searching deeper
             if self.time_control.is_time_up() {
@@ -342,7 +342,10 @@ impl Searcher {
         self.analytics.nodes_searched += 1;
 
         // Timeout check
-        if self.analytics.nodes_searched % NODE_CHECK_INTERVAL == 0
+        if self
+            .analytics
+            .nodes_searched
+            .is_multiple_of(NODE_CHECK_INTERVAL)
             && self.time_control.is_time_up()
         {
             return None;
@@ -478,7 +481,10 @@ impl Searcher {
         self.analytics.quiescence_nodes_searched += 1;
 
         // Timeout check
-        if self.analytics.quiescence_nodes_searched % QUIESCENCE_NODE_CHECK_INTERVAL == 0
+        if self
+            .analytics
+            .quiescence_nodes_searched
+            .is_multiple_of(QUIESCENCE_NODE_CHECK_INTERVAL)
             && self.time_control.is_time_up()
         {
             return None;
@@ -508,7 +514,6 @@ impl Searcher {
         {
             return Some(0);
         }
-
 
         let in_check = state.is_in_check(state.side_to_move);
 

@@ -14,7 +14,7 @@ impl Color {
         unsafe { Color::unchecked_transmute_from(index as u8) }
     }
     pub fn all() -> impl Iterator<Item = Color> {
-        (0..Color::NUM).map(|i| Self::index(i))
+        (0..Color::NUM).map(Self::index)
     }
     pub fn opposite(&self) -> Self {
         match self {
@@ -64,7 +64,7 @@ impl Rank {
         unsafe { Rank::unchecked_transmute_from(index as u8) }
     }
     pub fn all() -> impl Iterator<Item = Rank> {
-        (0..Rank::NUM).map(|i| Self::index(i))
+        (0..Rank::NUM).map(Self::index)
     }
 }
 
@@ -87,7 +87,7 @@ impl File {
         unsafe { File::unchecked_transmute_from(index as u8) }
     }
     pub fn all() -> impl Iterator<Item = File> {
-        (0..File::NUM).map(|i| Self::index(i))
+        (0..File::NUM).map(Self::index)
     }
 }
 
@@ -110,7 +110,7 @@ impl Square {
     pub const NUM: usize = std::mem::variant_count::<Square>();
 
     pub fn index(index: u8) -> Self {
-        unsafe { Square::unchecked_transmute_from(index as u8) }
+        unsafe { Square::unchecked_transmute_from(index) }
     }
 
     pub fn all() -> impl Iterator<Item = Square> {
@@ -225,7 +225,7 @@ impl PromotionPiece {
         unsafe { PromotionPiece::unchecked_transmute_from(index) }
     }
     pub fn all() -> impl Iterator<Item = PromotionPiece> {
-        (0..PromotionPiece::NUM).map(|i| Self::index(i as u8))
+        (0..PromotionPiece::NUM).map(Self::index)
     }
     pub fn to_piece(&self) -> Piece {
         match self {

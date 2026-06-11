@@ -56,11 +56,7 @@ fn rank_to_char(rank: Rank) -> char {
 
 fn disambiguate_from(mv: Move, state: &GameState) -> Option<String> {
     let piece = mv.get_moved_piece();
-
-    let piece_char = match piece_to_char(piece) {
-        Some(c) => c,
-        None => return None, // Pawns don't need disambiguation
-    };
+    let piece_char = piece_to_char(piece)?;
 
     let mut legal_moves = MoveList::default();
     state.clone().generate_valid_moves(&mut legal_moves);
@@ -71,7 +67,7 @@ fn disambiguate_from(mv: Move, state: &GameState) -> Option<String> {
         .iter()
         .filter(|&sq| sq != mv.get_from())
         .filter_map(|from_sq| {
-            let mut potential_move = mv.clone();
+            let mut potential_move = mv;
             potential_move.set_from(from_sq);
 
             legal_moves
@@ -154,7 +150,7 @@ pub fn move_to_pgn(mv: Move, state: &GameState) -> String {
     }
 }
 
-pub fn to_pgn(move_list: &Vec<Move>, fen: Option<&str>) -> String {
+pub fn to_pgn(move_list: &[Move], fen: Option<&str>) -> String {
     let mut state = match fen {
         Some(fen) => GameState::from_fen(fen).unwrap(),
         None => GameState::new(),

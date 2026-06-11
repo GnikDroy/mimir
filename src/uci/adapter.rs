@@ -17,6 +17,12 @@ pub struct UCIAdapter {
     out: Arc<Mutex<Box<dyn std::io::Write + Send>>>,
 }
 
+impl Default for UCIAdapter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl UCIAdapter {
     pub fn new() -> Self {
         Self {
@@ -69,7 +75,7 @@ impl UCIAdapter {
             write!(writer, " pv {}", best_move.repr_string())?;
         }
 
-        write!(writer, "\n")?;
+        writeln!(writer)?;
 
         Ok(())
     }
@@ -128,7 +134,7 @@ impl UCIAdapter {
         let generation = self.next_generation();
         let generation_token = Arc::clone(&self.search_generation);
         let out = Arc::clone(&self.out);
-        let mut state = self.state.clone();
+        let mut state = self.state;
 
         thread::spawn(move || {
             let mut searcher = Searcher::new();

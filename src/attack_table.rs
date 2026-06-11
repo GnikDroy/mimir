@@ -339,7 +339,7 @@ impl AttackTable {
     }
 }
 
-pub static ATTACK_TABLE: Lazy<AttackTable> = Lazy::new(|| AttackTable::new());
+pub static ATTACK_TABLE: Lazy<AttackTable> = Lazy::new(AttackTable::new);
 
 #[cfg(test)]
 mod tests {

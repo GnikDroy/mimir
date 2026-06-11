@@ -73,7 +73,7 @@ impl TimeControl {
         let moves_left = self.movestogo.unwrap_or(20).max(1) as u128;
         let base_ms = fallback_remaining.as_millis();
         let inc_ms = fallback_increment.as_millis();
-        let budget_ms = (base_ms / moves_left) + (inc_ms * 1 / 2);
+        let budget_ms = (base_ms / moves_left) + (inc_ms / 2);
         let budget_ms = budget_ms.max(1).min(u128::from(u64::MAX));
 
         // give ourselves a little extra time buffer to avoid time forfeits due to overhead

@@ -50,6 +50,18 @@ impl TranspositionTable {
         self.entries[self.index(key)].filter(|entry| entry.key == key)
     }
 
+    /// Permill (0-1000) fill estimate, sampled from a fixed-size prefix.
+    pub fn hashfull(&self) -> u32 {
+        const SAMPLE_SIZE: usize = 3000;
+        const PERMILL_SCALE: usize = 1000;
+        let sample = self.entries.len().min(SAMPLE_SIZE);
+        if sample == 0 {
+            return 0;
+        }
+        let filled = self.entries[..sample].iter().filter(|e| e.is_some()).count();
+        ((filled * PERMILL_SCALE) / sample) as u32
+    }
+
     pub fn store(&mut self, entry: TranspositionEntry) {
         let index = self.index(entry.key);
 

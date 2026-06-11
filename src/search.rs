@@ -20,6 +20,8 @@ pub struct SearchAnalytics {
     pub quiescence_alpha_beta_cutoffs: u64,
     pub transposition_table_hits: u64,
     pub transposition_table_cuts: u64,
+    pub transposition_table_hashfull: u32,
+    pub pvs_re_searches: u64,
 }
 
 impl SearchAnalytics {
@@ -40,6 +42,7 @@ pub struct SearchResult {
     pub best_move: Option<Move>,
     pub evaluation: i32,
     pub analytics: SearchAnalytics,
+    pub pv: PvList,
 }
 
 impl SearchResult {
@@ -54,6 +57,7 @@ impl SearchResult {
 }
 
 pub type ZobristHashList = StackVec<ZobristHash, MAX_PLY>;
+pub type PvList = StackVec<Move, MAX_PLY>;
 
 pub struct Searcher {
     move_pool: Box<[MoveList; MAX_PLY]>,
@@ -63,6 +67,11 @@ pub struct Searcher {
     analytics: SearchAnalytics,
     killer_moves: Box<[[Move; 2]; MAX_PLY]>,
     history: Box<[[[Move; Square::NUM]; Square::NUM]; Color::NUM]>,
+    // Triangular PV table: pv_table[ply][0..pv_length[ply]] is the PV
+    // discovered at this ply. On a new best move at a node we write
+    // the move into slot 0 and copy the child's PV after it.
+    pv_table: Box<[[Move; MAX_PLY]; MAX_PLY]>,
+    pv_length: Box<[u8; MAX_PLY]>,
 }
 
 const MAX_PLY: usize = 64;
@@ -78,6 +87,8 @@ impl Searcher {
         let move_pool = Box::new([MoveList::default(); MAX_PLY]);
         let killer_moves = Box::new([[0u32; KILLER_MOVES_PER_PLY]; MAX_PLY]);
         let history = Box::new([[[0u32; Square::NUM]; Square::NUM]; Color::NUM]);
+        let pv_table = Box::new([[0u32; MAX_PLY]; MAX_PLY]);
+        let pv_length = Box::new([0u8; MAX_PLY]);
 
         let time_control = TimeControl::new(Duration::from_mins(1), Duration::from_secs(0));
 
@@ -86,10 +97,120 @@ impl Searcher {
             position_history: Box::new(ZobristHashList::default()),
             killer_moves,
             history,
+            pv_table,
+            pv_length,
             transposition_table: TranspositionTable::new(),
             analytics: SearchAnalytics::default(),
             time_control,
         }
+    }
+
+    /// Apply `mv`, recurse into `alpha_beta` with negated bounds, undo,
+    /// and return the score in the parent's frame. Returns `None` on timeout.
+    #[inline]
+    fn negamax_child(
+        &mut self,
+        state: &mut GameState,
+        mv: Move,
+        depth: u8,
+        ply: usize,
+        alpha: i32,
+        beta: i32,
+    ) -> Option<i32> {
+        self.position_history.push(state.zobrist_hash);
+        let undo = state.make_move(mv);
+        let result = self
+            .alpha_beta(state, depth - 1, ply + 1, -beta, -alpha)
+            .map(|(_, e)| -e);
+        state.unmake_move(mv, &undo);
+        self.position_history.pop();
+        result
+    }
+
+    /// Quiescence counterpart to `negamax_child`. Apply `mv`, recurse into
+    /// `quiescence` with negated bounds, undo, and return the score in the
+    /// parent's frame. Returns `None` on timeout.
+    #[inline]
+    fn quiescence_child(
+        &mut self,
+        state: &mut GameState,
+        mv: Move,
+        ply: usize,
+        alpha: i32,
+        beta: i32,
+    ) -> Option<i32> {
+        self.position_history.push(state.zobrist_hash);
+        let undo = state.make_move(mv);
+        let result = self.quiescence(state, ply + 1, -beta, -alpha).map(|e| -e);
+        state.unmake_move(mv, &undo);
+        self.position_history.pop();
+        result
+    }
+
+    /// Append `mv` followed by the child's PV into this ply's PV slot.
+    #[inline]
+    fn update_pv(&mut self, ply: usize, mv: Move) {
+        if ply + 1 >= MAX_PLY {
+            self.pv_table[ply][0] = mv;
+            self.pv_length[ply] = 1;
+            return;
+        }
+        let child_len = self.pv_length[ply + 1] as usize;
+        let (lo, hi) = self.pv_table.split_at_mut(ply + 1);
+        lo[ply][0] = mv;
+        lo[ply][1..=child_len].copy_from_slice(&hi[0][..child_len]);
+        self.pv_length[ply] = (child_len + 1) as u8;
+    }
+
+    /// Snapshot the root PV into a `PvList` for reporting. After the
+    /// triangular table runs out (TT cutoffs leave it short), continue by
+    /// replaying TT entries until we hit a miss, a missing best_move, an
+    /// illegal move (key collision), a repeated position, or `MAX_PLY`.
+    fn root_pv(&self, state: &GameState) -> PvList {
+        let mut pv = PvList::default();
+        let len = self.pv_length[0] as usize;
+        for i in 0..len {
+            pv.push(self.pv_table[0][i]);
+        }
+
+        let mut working_state = *state;
+        let mut seen = ZobristHashList::default();
+        seen.push(working_state.zobrist_hash);
+        for i in 0..len {
+            working_state.make_move(pv[i]);
+            if seen.len() < MAX_PLY {
+                seen.push(working_state.zobrist_hash);
+            }
+        }
+
+        while pv.len() < MAX_PLY {
+            let Some(entry) = self.transposition_table.probe(working_state.zobrist_hash) else {
+                break;
+            };
+            let Some(mv) = entry.best_move else { break };
+
+            // Guard against TT key collisions: the stored move may belong to
+            // a different position that happened to hash to the same slot.
+            let mut moves = MoveList::default();
+            working_state.generate_valid_moves(&mut moves);
+            if !moves.iter().any(|&m| m == mv) {
+                break;
+            }
+
+            working_state.make_move(mv);
+
+            // A TT-pointed cycle would loop here forever — stop on revisit.
+            if seen.iter().any(|&h| h == working_state.zobrist_hash) {
+                break;
+            }
+
+            pv.push(mv);
+            if seen.len() < MAX_PLY {
+                seen.push(working_state.zobrist_hash);
+            }
+        }
+
+        pv
     }
 
     /// Detect repetition: returns true if `hash` matches any position
@@ -275,12 +396,17 @@ impl Searcher {
         // Clear killer moves
         self.killer_moves.fill([0u32; KILLER_MOVES_PER_PLY]);
 
+        // Clear PV table lengths. The data array doesn't need clearing —
+        // pv_length controls which slots are read.
+        self.pv_length.fill(0);
+
         // Reset position history: repetition detection only considers
         // positions visited within this search tree.
         self.position_history.clear();
 
         let mut best_move = None;
         let mut best_eval = 0i32;
+        let mut pv = PvList::default();
 
         self.time_control.set_search_deadline(state.side_to_move);
         for depth in 1..=max_depth {
@@ -288,6 +414,7 @@ impl Searcher {
                 Some((mv, eval)) => {
                     best_move = mv;
                     best_eval = eval;
+                    pv = self.root_pv(state);
                     self.analytics.depth = depth;
                 }
                 None => {
@@ -297,11 +424,13 @@ impl Searcher {
 
             // report info after each completed depth, if a reporting function is provided
             self.analytics.elapsed = self.time_control.get_elapsed();
+            self.analytics.transposition_table_hashfull = self.transposition_table.hashfull();
             if let Some(f) = report_fn.as_ref() {
                 f(SearchResult {
                     best_move,
                     evaluation: best_eval,
                     analytics: self.analytics,
+                    pv,
                 })
             }
 
@@ -316,6 +445,7 @@ impl Searcher {
             best_move,
             evaluation: best_eval,
             analytics: self.analytics,
+            pv,
         }
     }
 
@@ -327,6 +457,10 @@ impl Searcher {
         mut alpha: i32,
         mut beta: i32,
     ) -> Option<(Option<Move>, i32)> {
+        // Reset this ply's PV. Early returns (draw, depth==0, TT cutoff) will
+        // leave it empty; the parent then sees an empty child PV and truncates.
+        self.pv_length[ply] = 0;
+
         // Draw detection: 50-move rule and repetition.
         // Only at ply > 0 so the root still produces a best move
         if ply > 0
@@ -398,28 +532,27 @@ impl Searcher {
         let mut best_eval = i32::MIN / 2;
         for i in 0..move_count {
             let mv = self.move_pool[ply][i];
-            self.position_history.push(state.zobrist_hash);
-            let undo_info = state.make_move(mv);
 
-            // (alpha, beta) -> (-beta, -alpha) is standard in negamax
-            let eval = self.alpha_beta(state, depth - 1, ply + 1, -beta, -alpha);
-
-            state.unmake_move(mv, &undo_info);
-            self.position_history.pop();
-
-            // If eval is None, it means we ran out of time during the search
-            // otherwise we use the returned evaluation score
-            let eval = eval?.1;
-
-            // Core negamax idea. We negate the evaluation score returned.
-            // This means each player is maximizing their own score.
-            let eval = -eval;
+            // Principal Variation Search: full window on the first move, null-window
+            // probe on the rest, re-search only when a probe falls inside (alpha, beta).
+            let eval = if i == 0 {
+                self.negamax_child(state, mv, depth, ply, alpha, beta)?
+            } else {
+                let scout = self.negamax_child(state, mv, depth, ply, alpha, alpha + 1)?;
+                if scout > alpha && scout < beta {
+                    self.analytics.pvs_re_searches += 1;
+                    self.negamax_child(state, mv, depth, ply, alpha, beta)?
+                } else {
+                    scout
+                }
+            };
 
             // min(-eval, -best_eval) = max(eval, best_eval)
             // So, this works for both players without needing to check which side is to move
             if eval > best_eval {
                 best_eval = eval;
                 best_move = Some(mv);
+                self.update_pv(ply, mv);
             }
 
             // update alpha.
@@ -543,22 +676,7 @@ impl Searcher {
 
         for i in 0..move_count {
             let mv = self.move_pool[ply][i];
-            self.position_history.push(state.zobrist_hash);
-            let undo_info = state.make_move(mv);
-
-            // (alpha, beta) -> (-beta, -alpha) is standard in negamax
-            let eval = self.quiescence(state, ply + 1, -beta, -alpha);
-
-            state.unmake_move(mv, &undo_info);
-            self.position_history.pop();
-
-            // If eval is None, it means we ran out of time during the search
-            // otherwise we use the returned evaluation score
-            let eval = eval?;
-
-            // Core negamax idea. We negate the evaluation score returned.
-            // This means each player is maximizing their own score.
-            let eval = -eval;
+            let eval = self.quiescence_child(state, mv, ply, alpha, beta)?;
 
             // update alpha.
             // alpha-beta on negamax, unlike minimax doesn't require updating beta.
@@ -647,6 +765,29 @@ mod tests {
             GameState::from_fen("5rk1/5ppp/2p5/1p6/1Q1p1P2/2Pq4/bP2R2P/rNK1R3 w - - 0 24").unwrap();
         let best_moves_expected = ["b4f8", "g8f8", "e2e8"];
         assert_move_sequence(state, &best_moves_expected, 4);
+    }
+
+    #[test]
+    fn test_search_returns_full_pv_for_mate_in_two() {
+        let mut state =
+            GameState::from_fen("5rk1/5ppp/2p5/1p6/1Q1p1P2/2Pq4/bP2R2P/rNK1R3 w - - 0 24").unwrap();
+        let mut searcher = Searcher::new();
+        let result = searcher.search(&mut state, 4, None::<fn(SearchResult)>);
+        let pv: Vec<String> = result.pv.iter().map(|m| m.repr_string()).collect();
+        assert_eq!(pv, vec!["b4f8", "g8f8", "e2e8"]);
+        assert_eq!(result.best_move.map(|m| m.repr_string()), Some("b4f8".to_string()));
+    }
+
+    #[test]
+    fn test_search_returns_full_pv_for_mate_in_three() {
+        // Mate-in-3 (5 plies). At depth 5 the in-search PV may truncate at TT
+        // cutoffs; TT-replay should extend it back to the full forced line.
+        let mut state =
+            GameState::from_fen("4k1r1/R6p/4Nb2/4n3/6Pq/2P4P/3Q3K/5R2 w - - 2 2").unwrap();
+        let mut searcher = Searcher::new();
+        let result = searcher.search(&mut state, 5, None::<fn(SearchResult)>);
+        let pv: Vec<String> = result.pv.iter().map(|m| m.repr_string()).collect();
+        assert_eq!(pv, vec!["d2d8", "f6d8", "f1f8", "g8f8", "e6g7"]);
     }
 
     #[test]
@@ -761,11 +902,6 @@ mod tests {
     fn test_search_finds_forced_repetition_draw() {
         // White is down significant material but the only drawing line is a forced
         // perpetual starting with a bishop sacrifice:
-        //   1. Bxa7+ Kxa7 2. Qa6+ Kb8 3. Qb5+ Ka8 4. Qa6+ (cycle to position after 2... Kb8).
-        // The cycle ends at ply 8, which is reached via the in-check quiescence
-        // evasion at ply 7. The stand-pat suppression while in check is what
-        // lets quiescence see the repetition instead of cutting off on the static
-        // material score.
         let mut state =
             GameState::from_fen("1krqr3/p1p2n2/2Q3b1/p3n3/1b6/8/4BB2/5K2 w - - 0 1").unwrap();
         let mut searcher = Searcher::new();
@@ -776,4 +912,16 @@ mod tests {
             Some("f2a7".to_string())
         );
     }
+
+    #[test]
+    fn test_search_stalemate_returns_zero() {
+        // Black to move with no legal moves and not in check: white queen on f7
+        // covers g8/g7/h7, white king on f6 covers g5/g6/g7. Black king on h8
+        // has no escape and is not attacked.
+        let mut state = GameState::from_fen("7k/5Q2/5K2/8/8/8/8/8 b - - 0 1").unwrap();
+        let mut searcher = Searcher::new();
+        let result = searcher.search(&mut state, 1, None::<fn(SearchResult)>);
+        assert_eq!(result.evaluation, 0);
+    }
+
 }

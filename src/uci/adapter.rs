@@ -58,8 +58,13 @@ impl UCIAdapter {
 
         write!(
             writer,
-            "info depth {} seldepth {} time {} nodes {} nps {} tbhits 0",
-            info.analytics.depth, seldepth, time, nodes, nps
+            "info depth {} seldepth {} time {} nodes {} nps {} hashfull {} tbhits 0",
+            info.analytics.depth,
+            seldepth,
+            time,
+            nodes,
+            nps,
+            info.analytics.transposition_table_hashfull
         )?;
 
         match info.mate_in() {
@@ -71,7 +76,14 @@ impl UCIAdapter {
             None => write!(writer, " score cp {}", info.evaluation),
         }?;
 
-        if let Some(best_move) = info.best_move {
+        if !info.pv.is_empty() {
+            write!(writer, " pv")?;
+            for mv in &*info.pv {
+                write!(writer, " {}", mv.repr_string())?;
+            }
+        } else if let Some(best_move) = info.best_move {
+            // Fall back to the root best move when no PV is available
+            // (e.g. early termination before any iteration completed).
             write!(writer, " pv {}", best_move.repr_string())?;
         }
 
@@ -433,6 +445,7 @@ mod tests {
             best_move: Some(mv),
             evaluation: 42,
             analytics: crate::search::SearchAnalytics::default(),
+            pv: crate::search::PvList::default(),
         };
 
         let result = UCIAdapter::handle_info(info, &mut output);

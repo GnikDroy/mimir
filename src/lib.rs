@@ -12,6 +12,7 @@ pub mod state;
 
 pub mod fen;
 pub mod pgn;
+pub mod epd;
 
 pub mod evaluation;
 pub mod move_generator;

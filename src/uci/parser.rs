@@ -1,19 +1,47 @@
+//! Parser for UCI (Universal Chess Interface) commands.
+//!
+//! This module turns raw text lines from a GUI or test harness into the
+//! strongly typed [`UCICommand`] variants consumed by
+//! [`crate::uci::adapter`]. Parsing is intentionally permissive: unknown
+//! tokens inside otherwise well-formed commands are skipped rather than
+//! rejected, and any unrecognized input becomes [`UCICommand::Unknown`]
+//! so the runtime loop can decide how to respond. This is per the UCI spec.
+//!
+//! See the UCI protocol specification for the canonical command grammar.
+
 use std::io::BufRead;
 use std::time::Duration;
 
+/// Parameters extracted from a UCI `go` command.
+///
+/// Each field corresponds to an optional sub-token of `go`. Missing
+/// tokens leave their field as [`None`] (or `false` for [`Self::infinite`]),
+/// so the search layer can pick a sensible default per field.
+///
+/// Durations originate from millisecond integers in the protocol and are
+/// stored as [`Duration`] for use with [`crate::time_control`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GoCommand {
+    /// Fixed search depth in plies (`go depth N`).
     pub depth: Option<u8>,
+    /// Hard cap on the time spent searching this move (`go movetime N`).
     pub movetime: Option<Duration>,
+    /// White's remaining clock time (`go wtime N`).
     pub wtime: Option<Duration>,
+    /// Black's remaining clock time (`go btime N`).
     pub btime: Option<Duration>,
+    /// White's increment per move (`go winc N`).
     pub winc: Option<Duration>,
+    /// Black's increment per move (`go binc N`).
     pub binc: Option<Duration>,
+    /// Moves remaining until the next time control (`go movestogo N`).
     pub movestogo: Option<u32>,
+    /// `true` when the GUI sent `go infinite`; search runs until `stop`.
     pub infinite: bool,
 }
 
 impl GoCommand {
+    /// Returns a [`GoCommand`] with every field unset.
     fn new() -> Self {
         Self {
             depth: None,
@@ -28,27 +56,62 @@ impl GoCommand {
     }
 }
 
+/// A single parsed UCI command.
+///
+/// Variants map one-to-one to the commands a GUI may send the engine over
+/// stdin. Inputs that do not match a known command (or that are
+/// syntactically malformed) are surfaced as [`UCICommand::Unknown`] with
+/// the offending text attached, so the caller can log or ignore them
+/// without aborting the protocol loop.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UCICommand {
+    /// `uci` — handshake request; engine should reply with `id`/`uciok`.
     Uci,
+    /// `isready` — engine should reply `readyok` when idle.
     IsReady,
+    /// `ucinewgame` — clear per-game state (e.g. transposition table).
     UciNewGame,
+    /// `position [startpos | fen <fen>] [moves <m1> <m2> ...]`.
+    ///
+    /// `fen` is [`None`] when `startpos` was used; otherwise it holds the
+    /// six space-separated FEN fields rejoined into a single string.
+    /// `moves` are UCI long-algebraic strings to apply on top.
     Position {
+        /// FEN string to load, or [`None`] for the standard start position.
         fen: Option<String>,
+        /// UCI moves to apply after loading the position.
         moves: Vec<String>,
     },
+    /// `go ...` — start searching with the parameters in [`GoCommand`].
     Go(GoCommand),
+    /// `stop` — terminate the current search as soon as possible.
     Stop,
+    /// `ponderhit` — the opponent played the predicted move while pondering.
     PonderHit,
+    /// `setoption name <name> [value <value>]`.
+    ///
+    /// Multi-word names and values are preserved verbatim with single
+    /// spaces between tokens.
     SetOption {
+        /// Option name; may contain spaces.
         name: String,
+        /// Option value, or [`None`] for value-less options.
         value: Option<String>,
     },
+    /// `quit` — exit the engine.
     Quit,
+    /// Any input that did not parse as a known command. The wrapped
+    /// string is the offending line (or a short tag identifying which
+    /// sub-parse failed).
     Unknown(String),
 }
 
 impl UCICommand {
+    /// Reads one line from `reader` and parses it as a [`UCICommand`].
+    ///
+    /// Returns [`None`] on EOF, on I/O error, or when the line is empty
+    /// after trimming. A non-empty line always parses to `Some`, falling
+    /// back to [`UCICommand::Unknown`] if no variant matches.
     pub fn read<R: BufRead>(reader: &mut R) -> Option<Self> {
         let mut line = String::new();
         reader.read_line(&mut line).ok()?;
@@ -59,6 +122,7 @@ impl UCICommand {
         }
     }
 
+    /// Parses a single UCI command line.
     pub fn parse(line: &str) -> Self {
         let mut parts = line.split_whitespace();
         let Some(command) = parts.next() else {
@@ -79,6 +143,14 @@ impl UCICommand {
         }
     }
 
+    /// Parses the tail of a `position` command (everything after the
+    /// `position` keyword).
+    ///
+    /// Accepts `startpos` or `fen <6 fields>`, optionally followed by
+    /// `moves <m1> <m2> ...`. The six FEN fields are required when `fen`
+    /// is used and are rejoined with single spaces. Any deviation from
+    /// this grammar produces an [`UCICommand::Unknown`] tagged with the
+    /// sub-parse that failed.
     fn parse_position(tokens: Vec<&str>) -> Self {
         let mut tokens = tokens.into_iter().peekable();
         let Some(mode) = tokens.next() else {
@@ -108,6 +180,13 @@ impl UCICommand {
         Self::Position { fen, moves }
     }
 
+    /// Parses the tail of a `go` command into a [`GoCommand`].
+    ///
+    /// Sub-tokens are scanned in order; unknown tokens and unparseable
+    /// numeric values are silently ignored, leaving the corresponding
+    /// field at its default. `depth` is parsed as [`u8`], `movestogo` as
+    /// [`u32`], and all time-related fields as milliseconds converted to
+    /// [`Duration`]. `infinite` is a bare flag with no argument.
     fn parse_go(tokens: Vec<&str>) -> Self {
         let mut go = GoCommand::new();
         let mut tokens = tokens.into_iter().peekable();
@@ -156,6 +235,13 @@ impl UCICommand {
         Self::Go(go)
     }
 
+    /// Parses the tail of a `setoption` command.
+    ///
+    /// The grammar is `name <name tokens...> [value <value tokens...>]`.
+    /// Name and value may contain spaces; tokens are rejoined with a
+    /// single space. A missing leading `name` keyword yields
+    /// [`UCICommand::Unknown`]. If `value` is absent the value field is
+    /// [`None`].
     fn parse_setoption(tokens: Vec<&str>) -> Self {
         let mut tokens = tokens.into_iter().peekable();
         if tokens.next() != Some("name") {
@@ -183,6 +269,8 @@ impl UCICommand {
         }
     }
 
+    /// Pops the next token, used to read the argument that follows a
+    /// keyword like `depth` or `movetime` in a `go` command.
     fn next_value<'a, I>(tokens: &mut std::iter::Peekable<I>) -> Option<&'a str>
     where
         I: Iterator<Item = &'a str>,
@@ -190,6 +278,11 @@ impl UCICommand {
         tokens.next()
     }
 
+    /// Pops exactly `count` tokens from the iterator.
+    ///
+    /// Returns [`None`] if the iterator is exhausted before `count`
+    /// tokens are collected, which `parse_position` uses to detect a
+    /// truncated FEN.
     fn take_exact<'a, I>(tokens: &mut std::iter::Peekable<I>, count: usize) -> Option<Vec<&'a str>>
     where
         I: Iterator<Item = &'a str>,

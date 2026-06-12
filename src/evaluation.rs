@@ -1,7 +1,25 @@
+//! Static evaluation: tapered piece-square tables + material.
+//!
+//! The evaluator computes two parallel scores per side — a middlegame
+//! score (`mg`) and an endgame score (`eg`) — by summing material
+//! values and PSTs read from each piece's square. A single phase
+//! counter, accumulated from per-piece weights in [`PIECE_PHASE_WEIGHTS`],
+//! tracks how far the position has progressed: 24 means starting
+//! material, 0 means a bare king-and-pawn endgame. The returned score
+//! is the linear interpolation between `mg` and `eg` by that phase,
+//! plus a small tempo bonus for the side to move. Scores are always
+//! reported from the side-to-move's perspective (positive = good for us).
+//!
+//! PST tables and material values are taken from the public
+//! PeSTO evaluation function on the [Chess Programming Wiki](https://www.chessprogramming.org/PeSTO).
+
 use crate::bitboard::*;
 use crate::core::*;
 use crate::state::GameState;
 
+/// Middlegame piece-square table for pawns, laid out rank 8 → rank 1
+/// (top of the array is rank 8, bottom is rank 1). White reads it
+/// directly; black reads it after [`Square::flip_vertical`].
 #[rustfmt::skip]
 const MIDDLEGAME_PAWN_TABLE: [i32; 64] = [
       0,   0,   0,   0,   0,   0,  0,   0,
@@ -14,6 +32,7 @@ const MIDDLEGAME_PAWN_TABLE: [i32; 64] = [
       0,   0,   0,   0,   0,   0,  0,   0,
 ];
 
+/// Endgame counterpart of [`MIDDLEGAME_PAWN_TABLE`]. Same layout.
 #[rustfmt::skip]
 const ENDGAME_PAWN_TABLE: [i32; 64] = [
       0,   0,   0,   0,   0,   0,   0,   0,
@@ -26,6 +45,7 @@ const ENDGAME_PAWN_TABLE: [i32; 64] = [
       0,   0,   0,   0,   0,   0,   0,   0,
 ];
 
+/// Middlegame PST for knights. Same layout as [`MIDDLEGAME_PAWN_TABLE`].
 #[rustfmt::skip]
 const MIDDLEGAME_KNIGHT_TABLE: [i32; 64] = [
     -167, -89, -34, -49,  61, -97, -15, -107,
@@ -38,6 +58,7 @@ const MIDDLEGAME_KNIGHT_TABLE: [i32; 64] = [
     -105, -21, -58, -33, -17, -28, -19,  -23,
 ];
 
+/// Endgame PST for knights.
 #[rustfmt::skip]
 const ENDGAME_KNIGHT_TABLE: [i32; 64] = [
     -58, -38, -13, -28, -31, -27, -63, -99,
@@ -50,6 +71,7 @@ const ENDGAME_KNIGHT_TABLE: [i32; 64] = [
     -29, -51, -23, -15, -22, -18, -50, -64,
 ];
 
+/// Middlegame PST for bishops.
 #[rustfmt::skip]
 const MIDDLEGAME_BISHOP_TABLE: [i32; 64] = [
     -29,  4, -82, -37, -25, -42,   7,  -8,
@@ -62,6 +84,7 @@ const MIDDLEGAME_BISHOP_TABLE: [i32; 64] = [
     -33, -3, -14, -21, -13, -12, -39, -21,
 ];
 
+/// Endgame PST for bishops.
 #[rustfmt::skip]
 const ENDGAME_BISHOP_TABLE: [i32; 64] = [
     -14, -21, -11,  -8, -7,  -9, -17, -24,
@@ -74,6 +97,7 @@ const ENDGAME_BISHOP_TABLE: [i32; 64] = [
     -23,  -9, -23,  -5, -9, -16,  -5, -17,
 ];
 
+/// Middlegame PST for rooks.
 #[rustfmt::skip]
 const MIDDLEGAME_ROOK_TABLE: [i32; 64] = [
      32,  42,  32,  51, 63,  9,  31,  43,
@@ -86,6 +110,7 @@ const MIDDLEGAME_ROOK_TABLE: [i32; 64] = [
     -19, -13,   1,  17, 16,  7, -37, -26,
 ];
 
+/// Endgame PST for rooks.
 #[rustfmt::skip]
 const ENDGAME_ROOK_TABLE: [i32; 64] = [
     13, 10, 18, 15, 12,  12,   8,   5,
@@ -98,6 +123,7 @@ const ENDGAME_ROOK_TABLE: [i32; 64] = [
     -9,  2,  3, -1, -5, -13,   4, -20,
 ];
 
+/// Middlegame PST for the queen.
 #[rustfmt::skip]
 const MIDDLEGAME_QUEEN_TABLE: [i32; 64] = [
     -28,   0,  29,  12,  59,  44,  43,  45,
@@ -110,6 +136,7 @@ const MIDDLEGAME_QUEEN_TABLE: [i32; 64] = [
      -1, -18,  -9,  10, -15, -25, -31, -50,
 ];
 
+/// Endgame PST for the queen.
 #[rustfmt::skip]
 const ENDGAME_QUEEN_TABLE: [i32; 64] = [
      -9,  22,  22,  27,  27,  19,  10,  20,
@@ -122,6 +149,8 @@ const ENDGAME_QUEEN_TABLE: [i32; 64] = [
     -33, -28, -22, -43,  -5, -32, -20, -41,
 ];
 
+/// Middlegame PST for the king (rewards castled shelter, penalizes the
+/// center).
 #[rustfmt::skip]
 const MIDDLEGAME_KING_TABLE: [i32; 64] = [
     -65,  23,  16, -15, -56, -34,   2,  13,
@@ -134,6 +163,8 @@ const MIDDLEGAME_KING_TABLE: [i32; 64] = [
     -15,  36,  12, -54,   8, -28,  24,  14,
 ];
 
+/// Endgame PST for the king (rewards centralization once it is no
+/// longer a mating target).
 #[rustfmt::skip]
 const ENDGAME_KING_TABLE: [i32; 64] = [
     -74, -35, -18, -18, -11,  15,   4, -17,
@@ -146,6 +177,8 @@ const ENDGAME_KING_TABLE: [i32; 64] = [
     -53, -34, -21, -11, -28, -14, -24, -43,
 ];
 
+/// Endgame PSTs indexed by [`Piece`] (King, Queen, Rook, Bishop, Knight,
+/// Pawn — see [`Piece::all`]).
 const ENDGAME_PIECE_TABLES: [[i32; 64]; Piece::NUM] = [
     ENDGAME_KING_TABLE,
     ENDGAME_QUEEN_TABLE,
@@ -155,6 +188,7 @@ const ENDGAME_PIECE_TABLES: [[i32; 64]; Piece::NUM] = [
     ENDGAME_PAWN_TABLE,
 ];
 
+/// Middlegame PSTs indexed by [`Piece`].
 const MIDDLEGAME_PIECE_TABLES: [[i32; 64]; Piece::NUM] = [
     MIDDLEGAME_KING_TABLE,
     MIDDLEGAME_QUEEN_TABLE,
@@ -164,15 +198,42 @@ const MIDDLEGAME_PIECE_TABLES: [[i32; 64]; Piece::NUM] = [
     MIDDLEGAME_PAWN_TABLE,
 ];
 
+/// Per-piece phase contribution. Queens count most, minors a little,
+/// pawns and kings not at all. The sum across both sides at the start
+/// of the game equals [`PHASE_LIMIT`].
 const PIECE_PHASE_WEIGHTS: [i32; Piece::NUM] = [0, 4, 2, 1, 1, 0];
 
+/// Middlegame material values in centipawns, indexed by [`Piece`].
 const MIDDLEGAME_MATERIAL_VALUES: [i32; Piece::NUM] = [0, 1025, 477, 365, 337, 82];
+
+/// Endgame material values in centipawns. Pieces are revalued: pawns
+/// and rooks go up, minors and queens slightly down.
 const ENDGAME_MATERIAL_VALUES: [i32; Piece::NUM] = [0, 936, 512, 297, 281, 94];
 
+/// Phase value at the starting position (`2*Q*4 + 4*R*2 + 4*N*1 + 4*B*1`).
 const PHASE_LIMIT: i32 = 24;
 
+/// Score used for forced mate. Larger than any reasonable material score
+/// but kept comfortably below [`i32::MAX`] so distance-to-mate offsets
+/// can be applied without overflow.
 pub const MATE_SCORE: i32 = i32::MAX / 2;
 
+/// Static evaluation of `state` from the side-to-move's perspective.
+///
+/// Walks every piece on the board exactly once to accumulate four
+/// quantities: middlegame and endgame scores for each color, plus the
+/// game-phase counter. Each piece contributes:
+/// - its color's middlegame material value and PST entry,
+/// - its color's endgame material value and PST entry,
+/// - its phase weight from [`PIECE_PHASE_WEIGHTS`].
+///
+/// Black uses the same PSTs as white after applying
+/// [`Square::flip_vertical`] to the lookup index.
+///
+/// The final score is `(mg*phase + eg*(PHASE_LIMIT-phase)) / PHASE_LIMIT`
+/// from the side to move's perspective, plus a +10 cp tempo bonus
+/// favoring the side on move. Phase is clamped to [`PHASE_LIMIT`] so
+/// promotion gluts cannot push past full middlegame weighting.
 pub fn evaluate(state: &GameState) -> i32 {
     let side_to_move = state.side_to_move;
     let mut mg = [0i32; 2];

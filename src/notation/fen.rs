@@ -1,3 +1,15 @@
+//! FEN (Forsyth–Edwards Notation) parsing and emission for [`GameState`].
+//!
+//! Implements the canonical six-field FEN string:
+//! `<board> <stm> <castling> <ep> <halfmove> <fullmove>`. After parsing,
+//! the Zobrist hash is recomputed from scratch via
+//! [`crate::zobrist::ZOBRIST_HASHER`] so the new state is immediately
+//! usable by the transposition table and repetition detection.
+//!
+//! Castling rights are packed into a 4-bit field with the convention
+//! `K=0b0001`, `Q=0b0010`, `k=0b0100`, `q=0b1000` — matching the layout
+//! that [`crate::state`] uses everywhere else.
+
 use std::fmt::Display;
 use std::str::FromStr;
 
@@ -7,6 +19,20 @@ use crate::state::*;
 use crate::zobrist::ZOBRIST_HASHER;
 
 impl GameState {
+    /// Parses a FEN string into a [`GameState`].
+    ///
+    /// All six FEN fields are required; missing or extra
+    /// whitespace-separated tokens fail with an `Err`.
+    ///
+    /// The Zobrist hash is rebuilt at the end so the returned state is
+    /// fully consistent.
+    ///
+    /// # Errors
+    ///
+    /// Returns a human-readable `Err(String)` for any of: wrong field
+    /// count, malformed board (bad piece letter or wrong file count
+    /// per rank), unknown side-to-move, bad castling char, bad en
+    /// passant square, or unparseable clocks.
     pub fn from_fen(fen: &str) -> Result<Self, String> {
         let mut gs = GameState {
             pieces: [[BitBoard::EMPTY; Piece::NUM]; Color::NUM],
@@ -106,6 +132,13 @@ impl GameState {
         Ok(gs)
     }
 
+    /// Serializes `self` back into its FEN representation.
+    /// Assumes a valid game state.
+    ///
+    /// Inverse of [`from_fen`](Self::from_fen)
+    ///
+    /// For any valid FEN string `fen`,
+    /// `GameState::from_fen(fen).unwrap().to_fen() == fen`.
     pub fn to_fen(&self) -> String {
         let mut fen = String::new();
 
@@ -199,12 +232,14 @@ impl GameState {
     }
 }
 
+/// `GameState` displays as its FEN string.
 impl Display for GameState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.to_fen())
     }
 }
 
+/// Lets `str::parse()` produce a `GameState`.
 impl FromStr for GameState {
     type Err = String;
 

@@ -2,7 +2,6 @@ use std::time::Duration;
 
 use crate::core::*;
 use crate::evaluation::{evaluate, MATE_SCORE};
-use crate::move_generator::MoveList;
 use crate::stack_vec::StackVec;
 use crate::state::GameState;
 use crate::time_control::TimeControl;
@@ -192,15 +191,15 @@ impl Searcher {
             // Guard against TT key collisions: the stored move may belong to
             // a different position that happened to hash to the same slot.
             let mut moves = MoveList::default();
-            working_state.generate_valid_moves(&mut moves);
-            if !moves.iter().any(|&m| m == mv) {
+            working_state.generate_moves(&mut moves);
+            if !moves.contains(&mv) {
                 break;
             }
 
             working_state.make_move(mv);
 
             // A TT-pointed cycle would loop here forever — stop on revisit.
-            if seen.iter().any(|&h| h == working_state.zobrist_hash) {
+            if seen.contains(&working_state.zobrist_hash) {
                 break;
             }
 
@@ -316,8 +315,8 @@ impl Searcher {
             (history[state.side_to_move as usize][from][to] / HISTORY_BONUS_MULTIPLIER) as i32;
 
         match mv.get_type() {
-            MoveType::Promotion { .. } => 100_000 + tt_bonus,
-            MoveType::Capture { .. } => {
+            t if t.is_promotion() => 100_000 + tt_bonus,
+            MoveType::Capture | MoveType::EnPassant => {
                 let captured = mv.get_captured_piece().unwrap_or(Piece::Pawn) as usize;
                 let moved = mv.get_moved_piece() as usize;
                 // MVV-LVA style: prefer capturing high-value pieces with low-value attackers
@@ -337,8 +336,8 @@ impl Searcher {
         let tt_bonus = if Some(mv) == tt_move { 1_000_000 } else { 0 };
 
         match mv.get_type() {
-            MoveType::Promotion { .. } => 100_000 + tt_bonus,
-            MoveType::Capture { .. } => {
+            t if t.is_promotion() => 100_000 + tt_bonus,
+            MoveType::Capture | MoveType::EnPassant => {
                 let captured = mv.get_captured_piece().unwrap_or(Piece::Pawn) as usize;
                 let moved = mv.get_moved_piece() as usize;
                 // MVV-LVA style: prefer capturing high-value pieces with low-value attackers
@@ -517,7 +516,7 @@ impl Searcher {
         let move_count = {
             let moves = &mut self.move_pool[ply];
             moves.clear();
-            state.generate_valid_moves(moves);
+            state.generate_moves(moves);
 
             let tt_move = tt_entry.and_then(|entry| entry.best_move);
             let killer_moves = &self.killer_moves[ply];
@@ -631,7 +630,7 @@ impl Searcher {
         {
             let moves = &mut self.move_pool[ply];
             moves.clear();
-            state.generate_valid_moves(moves);
+            state.generate_moves(moves);
             let move_count = moves.len();
             if move_count == 0 {
                 if state.is_in_check(state.side_to_move) {
@@ -726,7 +725,7 @@ mod tests {
                 "Best Move: {}, Eval: {}, Nodes: {}, Max Depth: {}, Max QDepth: {}, Time: {:?}",
                 result
                     .best_move
-                    .map_or("None".to_string(), |mv| mv.repr_string()),
+                    .map_or("None".to_string(), |mv| mv.to_uci()),
                 result.evaluation,
                 result.analytics.total_nodes(),
                 result.analytics.depth,
@@ -748,7 +747,7 @@ mod tests {
         let best_moves = get_best_moves_till_limit(&mut state, search_depth, expected_moves.len());
         assert_eq!(best_moves.len(), expected_moves.len());
         for (i, mv) in best_moves.iter().enumerate() {
-            assert_eq!(mv.repr_string(), expected_moves[i]);
+            assert_eq!(mv.to_uci(), expected_moves[i]);
         }
     }
 
@@ -773,9 +772,12 @@ mod tests {
             GameState::from_fen("5rk1/5ppp/2p5/1p6/1Q1p1P2/2Pq4/bP2R2P/rNK1R3 w - - 0 24").unwrap();
         let mut searcher = Searcher::new();
         let result = searcher.search(&mut state, 4, None::<fn(SearchResult)>);
-        let pv: Vec<String> = result.pv.iter().map(|m| m.repr_string()).collect();
+        let pv: Vec<String> = result.pv.iter().map(|m| m.to_uci()).collect();
         assert_eq!(pv, vec!["b4f8", "g8f8", "e2e8"]);
-        assert_eq!(result.best_move.map(|m| m.repr_string()), Some("b4f8".to_string()));
+        assert_eq!(
+            result.best_move.map(|m| m.to_uci()),
+            Some("b4f8".to_string())
+        );
     }
 
     #[test]
@@ -786,7 +788,7 @@ mod tests {
             GameState::from_fen("4k1r1/R6p/4Nb2/4n3/6Pq/2P4P/3Q3K/5R2 w - - 2 2").unwrap();
         let mut searcher = Searcher::new();
         let result = searcher.search(&mut state, 5, None::<fn(SearchResult)>);
-        let pv: Vec<String> = result.pv.iter().map(|m| m.repr_string()).collect();
+        let pv: Vec<String> = result.pv.iter().map(|m| m.to_uci()).collect();
         assert_eq!(pv, vec!["d2d8", "f6d8", "f1f8", "g8f8", "e6g7"]);
     }
 
@@ -801,10 +803,10 @@ mod tests {
         let mut history = Box::new(ZobristHashList::default());
         for &uci in uci_moves {
             let mut moves = MoveList::default();
-            state.generate_valid_moves(&mut moves);
+            state.generate_moves(&mut moves);
             let mv = moves
                 .into_iter()
-                .find(|m| m.repr_string() == uci)
+                .find(|m| m.to_uci() == uci)
                 .unwrap_or_else(|| panic!("illegal move {uci}"));
             history.push(state.zobrist_hash);
             state.make_move(mv);
@@ -908,7 +910,7 @@ mod tests {
         let result = searcher.search(&mut state, 7, None::<fn(SearchResult)>);
         assert_eq!(result.evaluation, 0);
         assert_eq!(
-            result.best_move.map(|m| m.repr_string()),
+            result.best_move.map(|m| m.to_uci()),
             Some("f2a7".to_string())
         );
     }
@@ -923,5 +925,4 @@ mod tests {
         let result = searcher.search(&mut state, 1, None::<fn(SearchResult)>);
         assert_eq!(result.evaluation, 0);
     }
-
 }

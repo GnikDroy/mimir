@@ -1,5 +1,24 @@
+//! EPD (Extended Position Description) parser.
+//!
+//! EPD encodes a position plus a list of `opcode operand;` operations.
+//! The first four whitespace-separated tokens are the position fields
+//! (board, side-to-move, castling, en-passant); unlike FEN there is no
+//! halfmove clock or fullmove number in the position itself — they are
+//! carried by the `hmvc` and `fmvn` operations and default to 0 / 1.
+//!
+//! Only the operations the engine consumes are interpreted:
+//! - `id "..."` — test/position identifier
+//! - `bm <san> [<san> ...]` — best move(s), with trailing `+`/`#`
+//!   check/mate markers stripped
+//! - `hmvc <n>` — halfmove clock override
+//! - `fmvn <n>` — fullmove number override
+//!
+//! All other opcodes (`ce`, `acd`, `pv`, …) are accepted but ignored.
+
 use crate::state::*;
 
+/// Parsed EPD record: the position plus the subset of operations the
+/// engine consumes (`id`, `bm`).
 #[derive(Debug, Clone)]
 pub struct EPDInfo {
     pub state: GameState,
@@ -8,6 +27,11 @@ pub struct EPDInfo {
 }
 
 impl EPDInfo {
+    /// Parses one EPD record.
+    ///
+    /// Returns `Err` if the position fields are missing,
+    /// or operands (like `hmvc` or `fmvn`) fail to parse,
+    /// a quoted operand is unterminated, or `;` is missing.
     pub fn from_epd(epd: &str) -> Result<Self, String> {
         let trimmed = epd.trim();
 
@@ -59,7 +83,10 @@ impl EPDInfo {
             }
         }
 
-        let fen = format!("{} {} {} {} {} {}", board, side, castling, ep, halfmove_clock, fullmove_number);
+        let fen = format!(
+            "{} {} {} {} {} {}",
+            board, side, castling, ep, halfmove_clock, fullmove_number
+        );
         let state = GameState::from_fen(&fen)?;
 
         Ok(EPDInfo {
@@ -106,12 +133,17 @@ fn split_operations(s: &str) -> Result<Vec<String>, String> {
         return Err("Invalid EPD: unterminated quoted string".to_string());
     }
     if !current.trim().is_empty() {
-        return Err(format!("Invalid EPD: trailing operation without ';': {}", current.trim()));
+        return Err(format!(
+            "Invalid EPD: trailing operation without ';': {}",
+            current.trim()
+        ));
     }
 
     Ok(ops)
 }
 
+/// Strips a single matched pair of surrounding `"` or `'` quotes, if
+/// present; returns `s` unchanged otherwise.
 fn strip_quotes(s: &str) -> &str {
     let bytes = s.as_bytes();
     if bytes.len() >= 2 {
@@ -147,7 +179,8 @@ mod tests {
 
     #[test]
     fn test_parse_epd_hmvc_fmvn() {
-        let epd = "5rk1/1ppb3p/p1pb4/6q1/3P1p1r/2P1R2P/PP1BQ1P1/5RKN w - - hmvc 7; fmvn 42; id \"Z\";";
+        let epd =
+            "5rk1/1ppb3p/p1pb4/6q1/3P1p1r/2P1R2P/PP1BQ1P1/5RKN w - - hmvc 7; fmvn 42; id \"Z\";";
         let info = EPDInfo::from_epd(epd).unwrap();
         assert_eq!(info.state.halfmove_clock, 7);
         assert_eq!(info.state.fullmove_number, 42);
@@ -163,7 +196,8 @@ mod tests {
 
     #[test]
     fn test_parse_epd_semicolon_inside_quotes() {
-        let epd = "5rk1/1ppb3p/p1pb4/6q1/3P1p1r/2P1R2P/PP1BQ1P1/5RKN w - - id \"tricky; id\"; bm Rg3;";
+        let epd =
+            "5rk1/1ppb3p/p1pb4/6q1/3P1p1r/2P1R2P/PP1BQ1P1/5RKN w - - id \"tricky; id\"; bm Rg3;";
         let info = EPDInfo::from_epd(epd).unwrap();
         assert_eq!(info.id.as_deref(), Some("tricky; id"));
         assert_eq!(info.best_moves, vec!["Rg3".to_string()]);
@@ -171,14 +205,16 @@ mod tests {
 
     #[test]
     fn test_parse_epd_strips_check_markers_from_bm() {
-        let epd = "r1bq2rk/pp3pbp/2p1p1pQ/7P/3P4/2PB1N2/PP3PPR/2KR4 w - - bm Qxh7+; id \"WAC.004\";";
+        let epd =
+            "r1bq2rk/pp3pbp/2p1p1pQ/7P/3P4/2PB1N2/PP3PPR/2KR4 w - - bm Qxh7+; id \"WAC.004\";";
         let info = EPDInfo::from_epd(epd).unwrap();
         assert_eq!(info.best_moves, vec!["Qxh7".to_string()]);
     }
 
     #[test]
     fn test_parse_epd_strips_check_mate_markers_from_bm() {
-        let epd = "r1bq2rk/pp3pbp/2p1p1pQ/7P/3P4/2PB1N2/PP3PPR/2KR4 w - - bm Qxh7#; id \"WAC.004\";";
+        let epd =
+            "r1bq2rk/pp3pbp/2p1p1pQ/7P/3P4/2PB1N2/PP3PPR/2KR4 w - - bm Qxh7#; id \"WAC.004\";";
         let info = EPDInfo::from_epd(epd).unwrap();
         assert_eq!(info.best_moves, vec!["Qxh7".to_string()]);
     }

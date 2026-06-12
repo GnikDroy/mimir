@@ -1,3 +1,17 @@
+//! Imperative side of the UCI loop.
+//!
+//! [`UCIAdapter`] owns the engine's mutable runtime state — the current
+//! [`GameState`], a shared output writer, and a `search_generation`
+//! counter — and executes parsed [`UCICommand`] values.
+//!
+//! Searches run on a worker thread so the main thread can keep reading
+//! stdin (this is what makes `stop`, `position`, and `ucinewgame`
+//! responsive while a search is running). Every command that invalidates
+//! the in-flight search (`stop`, `position`, `ucinewgame`, `quit`)
+//! increments `search_generation`; the worker only emits its
+//! `bestmove`/`info` lines if the counter is still on the generation it
+//! captured at launch. Stale workers finish their work silently.
+
 use std::sync::{
     atomic::{AtomicU64, Ordering},
     Arc, Mutex,
@@ -5,12 +19,18 @@ use std::sync::{
 use std::thread;
 use std::time::Duration;
 
+use crate::core::*;
 use crate::search::{SearchResult, Searcher};
 use crate::state::GameState;
-use crate::{core::*, move_generator::MoveList};
 
 use super::parser::{GoCommand, UCICommand};
 
+/// Engine-side UCI runtime: position, generation counter, and writer.
+///
+/// The writer is shared (`Arc<Mutex<…>>`) between the main thread and
+/// any in-flight search worker so both can emit lines without
+/// interleaving. The generation counter is also shared so workers can
+/// check whether their results are still relevant before printing.
 pub struct UCIAdapter {
     state: GameState,
     search_generation: Arc<AtomicU64>,
@@ -24,6 +44,8 @@ impl Default for UCIAdapter {
 }
 
 impl UCIAdapter {
+    /// Creates an adapter at the standard start position, writing UCI
+    /// output to stdout.
     pub fn new() -> Self {
         Self {
             state: GameState::new(),
@@ -32,6 +54,9 @@ impl UCIAdapter {
         }
     }
 
+    /// Like [`new`](Self::new), but routes all UCI output to `writer`
+    /// instead of stdout. Used by tests to capture and assert on the
+    /// emitted protocol.
     pub fn with_writer(writer: Box<dyn std::io::Write + Send>) -> Self {
         Self {
             state: GameState::new(),
@@ -40,10 +65,21 @@ impl UCIAdapter {
         }
     }
 
+    /// Bumps the generation counter and returns the new value.
+    /// Any worker that launched against an older generation will see
+    /// the bump and skip emitting `bestmove` / late `info` lines.
     fn next_generation(&self) -> u64 {
         self.search_generation.fetch_add(1, Ordering::SeqCst) + 1
     }
 
+    /// Formats a [`SearchResult`] as a single UCI `info` line and
+    /// writes it to `writer`.
+    ///
+    /// `seldepth` is reported as the max of the iterative-deepening
+    /// depth and the deepest quiescence ply reached. Mate scores are
+    /// converted from plies-to-mate to moves-to-mate (the UCI convention).
+    /// If no principal variation is available, falls back to printing
+    /// just the root best move under `pv`.
     pub fn handle_info<W: std::io::Write>(
         info: SearchResult,
         writer: &mut W,
@@ -79,12 +115,12 @@ impl UCIAdapter {
         if !info.pv.is_empty() {
             write!(writer, " pv")?;
             for mv in &*info.pv {
-                write!(writer, " {}", mv.repr_string())?;
+                write!(writer, " {}", mv.to_uci())?;
             }
         } else if let Some(best_move) = info.best_move {
             // Fall back to the root best move when no PV is available
             // (e.g. early termination before any iteration completed).
-            write!(writer, " pv {}", best_move.repr_string())?;
+            write!(writer, " pv {}", best_move.to_uci())?;
         }
 
         writeln!(writer)?;
@@ -92,6 +128,14 @@ impl UCIAdapter {
         Ok(())
     }
 
+    /// Dispatches one parsed UCI command and returns `true` if the
+    /// runtime loop should keep going, or `false` on `quit`.
+    ///
+    /// Commands that invalidate any in-flight search
+    /// (`stop`, `position`, `ucinewgame`, `quit`) bump the generation
+    /// counter so the worker's eventual output is discarded.
+    /// `go` spawns a search on a worker thread and returns immediately.
+    /// `setoption`, `ponderhit`, and `Unknown` are accepted but ignored.
     pub fn handle_command(&mut self, command: UCICommand) -> bool {
         match command {
             UCICommand::Uci => {
@@ -129,6 +173,10 @@ impl UCIAdapter {
         true
     }
 
+    /// Resets the position to `fen` (or the standard start when
+    /// `fen` is `None`), then applies each UCI move in `moves` in
+    /// order. Invalid FEN falls back to the start position; moves
+    /// that don't match a legal move are silently skipped.
     fn apply_position(&mut self, fen: Option<String>, moves: Vec<String>) {
         self.state = match fen {
             Some(fen) => GameState::from_fen(&fen).unwrap_or_else(|_| GameState::new()),
@@ -142,6 +190,14 @@ impl UCIAdapter {
         }
     }
 
+    /// Spawns a search worker for `go` and returns immediately.
+    ///
+    /// The worker captures the bumped generation token at launch and
+    /// only emits `bestmove` if the counter still matches when the
+    /// search finishes; `info` callbacks always print (interleaving is
+    /// prevented by the shared writer mutex). `go infinite` is mapped
+    /// to a fixed depth of 32 since the engine relies on the time
+    /// control / `stop` command to terminate iterative deepening.
     fn launch_search(&mut self, go: GoCommand) {
         let generation = self.next_generation();
         let generation_token = Arc::clone(&self.search_generation);
@@ -176,7 +232,7 @@ impl UCIAdapter {
 
             if generation_token.load(Ordering::SeqCst) == generation {
                 let msg = match result.best_move {
-                    Some(best_move) => format!("bestmove {}", best_move.repr_string()),
+                    Some(best_move) => format!("bestmove {}", best_move.to_uci()),
                     None => "bestmove 0000".to_string(),
                 };
                 if let Ok(mut writer) = out.lock() {
@@ -186,10 +242,13 @@ impl UCIAdapter {
         });
     }
 
+    /// Resolves a UCI move string against the current position's legal
+    /// moves and returns the matching [`Move`], or [`None`] if no legal
+    /// move has that UCI encoding.
     fn parse_uci_move(&mut self, uci: &str) -> Option<Move> {
         let mut legal_moves = MoveList::default();
-        self.state.generate_valid_moves(&mut legal_moves);
-        legal_moves.into_iter().find(|mv| mv.repr_string() == uci)
+        self.state.generate_moves(&mut legal_moves);
+        legal_moves.into_iter().find(|mv| mv.to_uci() == uci)
     }
 }
 

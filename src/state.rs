@@ -1,33 +1,78 @@
+//! Mutable chess position and its move-application API.
+//!
+//! [`GameState`] is the engine's central type: piece bitboards, derived
+//! occupancies, side to move, castling rights, en-passant target,
+//! 50-move and full-move clocks, plus a running [`ZobristHash`].
+//!
+//! Moves are applied with [`GameState::make_move`], which returns an
+//! [`UndoInfo`] snapshot of the fields that can't be recovered from the
+//! move alone. Passing the same `(move, undo_info)` pair to
+//! [`GameState::unmake_move`] restores the position byte-for-byte and
+//! reverses every Zobrist XOR — search and perft rely on this exact
+//! symmetry.
+//!
+//! `make_move` does not validate legality.
 use crate::attack_table::ATTACK_TABLE;
 use crate::bitboard::*;
 use crate::core::*;
-use crate::move_generator::MoveList;
 use crate::zobrist::{ZobristHash, ZOBRIST_HASHER};
 
+/// Snapshot of the fields [`GameState::make_move`] cannot recompute
+/// from the move alone. Must be passed back to
+/// [`GameState::unmake_move`] to reverse the move exactly.
 #[derive(Debug, Clone, Copy)]
 pub struct UndoInfo {
+    /// Piece captured by this move, if any. For en-passant this is the
+    /// pawn removed from behind the destination square, not a piece on
+    /// the destination square itself.
     pub captured_piece: Option<Piece>,
+    /// Kind of the moving piece. Recorded so unmake can place it back
+    /// without re-deriving from the (now-mutated) board.
     pub moved_piece: Piece,
+    /// En-passant target square before the move, or [`None`].
     pub en_passant_before: Option<Square>,
+    /// Castling-rights bitmask before the move. See
+    /// [`GameState::castling_rights`] for the layout.
     pub castling_rights_before: u8,
+    /// 50-move halfmove clock before the move.
     pub halfmove_clock_before: u8,
+    /// Fullmove number before the move.
     pub fullmove_number_before: u16,
 }
 
+/// Full chess position: bitboards, occupancies, clocks, and the running
+/// Zobrist hash. Constructed via [`GameState::new`] (start position),
+/// [`GameState::empty`] (no pieces), or [`GameState::from_fen`].
 #[derive(Debug, Clone, Copy)]
 pub struct GameState {
+    /// Piece bitboards indexed `[color][piece_kind]`.
     pub pieces: [[BitBoard; Piece::NUM]; Color::NUM],
+    /// Per-side occupancies plus a combined occupancy at index
+    /// `Color::NUM` (i.e. `occupancies[2]`).
     pub occupancies: [BitBoard; Color::NUM + 1],
 
+    /// Side whose turn it is to move next.
     pub side_to_move: Color,
-    pub castling_rights: u8, // 4 bits: WK, WQ, BK, BQ
+    /// Castling availability as a 4-bit mask (LSB first):
+    /// bit 0 = white kingside, bit 1 = white queenside,
+    /// bit 2 = black kingside, bit 3 = black queenside.
+    pub castling_rights: u8,
+    /// Square *behind* a pawn that just made a double push — i.e. the
+    /// square an enemy pawn would capture *to* via en passant. [`None`]
+    /// when no en-passant capture is currently legal.
     pub en_passant: Option<Square>,
+    /// Halfmoves since the last pawn move or capture (50-move rule).
     pub halfmove_clock: u8,
+    /// 1-based fullmove counter; increments after every black move.
     pub fullmove_number: u16,
+    /// Incrementally maintained Zobrist key for this position.
     pub zobrist_hash: ZobristHash,
 }
 
 impl GameState {
+    /// Creates an empty board: no pieces, white to move, no castling
+    /// rights, no en-passant, clocks reset. The Zobrist hash is
+    /// computed from scratch to match this state.
     pub fn empty() -> Self {
         let mut state = GameState {
             pieces: [[0; Piece::NUM]; Color::NUM],
@@ -43,6 +88,7 @@ impl GameState {
         state
     }
 
+    /// Creates the standard chess starting position.
     pub fn new() -> Self {
         GameState::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1").unwrap()
     }
@@ -55,6 +101,9 @@ impl Default for GameState {
 }
 
 impl GameState {
+    /// Returns `true` if any piece of color `attacker` attacks `sq` in
+    /// the current position. Used for both check detection and castling
+    /// safety. Does not require `sq` to be occupied or empty.
     #[inline(always)]
     pub fn is_square_attacked(&self, sq: Square, attacker: Color) -> bool {
         let occ = self.occupancies[2];
@@ -91,6 +140,9 @@ impl GameState {
         false
     }
 
+    /// Returns `true` if `color`'s king is attacked. Assumes exactly
+    /// one king of that color is on the board (always true for legal
+    /// positions reached via [`make_move`](Self::make_move)).
     #[inline(always)]
     pub fn is_in_check(&self, color: Color) -> bool {
         let enemy = color.opposite();
@@ -98,23 +150,42 @@ impl GameState {
         self.is_square_attacked(Square::index(king_bb.trailing_zeros() as u8), enemy)
     }
 
-    fn no_moves(&mut self) -> bool {
+    // Checks if no legal moves exist.
+    fn no_moves(&self) -> bool {
         let mut moves = MoveList::default();
-        self.generate_valid_moves(&mut moves);
+        self.generate_moves(&mut moves);
         moves.is_empty()
     }
 
+    /// `true` when the side to move is in check and has no legal reply.
+    /// Generates legal moves internally, so callers should cache the
+    /// result rather than re-querying inside a hot loop.
     #[inline(always)]
-    pub fn is_checkmate(&mut self) -> bool {
+    pub fn is_checkmate(&self) -> bool {
         self.is_in_check(self.side_to_move) && self.no_moves()
     }
 
+    /// `true` when the side to move has no legal reply but is *not* in
+    /// check. Like [`is_checkmate`](Self::is_checkmate), generates
+    /// legal moves internally.
     #[inline(always)]
-    pub fn is_stalemate(&mut self) -> bool {
+    pub fn is_stalemate(&self) -> bool {
         !self.is_in_check(self.side_to_move) && self.no_moves()
     }
 
-    /// Make a move on the board and return undo information (does not validate legality)
+    /// Applies `move_encoded` to the position and returns an
+    /// [`UndoInfo`] that [`unmake_move`](Self::unmake_move) needs to
+    /// reverse it.
+    ///
+    /// Updates bitboards, occupancies, castling rights, en-passant,
+    /// the 50-move and fullmove clocks, side to move, and the Zobrist
+    /// hash incrementally. Handles promotions, normal captures, en
+    /// passant, both castling sides, and rook-capture / king-move
+    /// effects on castling rights.
+    ///
+    /// **Does not validate legality.** The caller is responsible for
+    /// passing a legal/pseudo-legal move and (where required) filtering out
+    /// moves that leave the moving side in check.
     pub fn make_move(&mut self, move_encoded: Move) -> UndoInfo {
         let from = move_encoded.get_from();
         let to = move_encoded.get_to();
@@ -298,6 +369,13 @@ impl GameState {
         }
     }
 
+    /// Reverses [`make_move`](Self::make_move) using the [`UndoInfo`]
+    /// it returned. Restores every field including the Zobrist hash to
+    /// byte-equality with the pre-move state.
+    ///
+    /// `move_encoded` and `undo_info` must be the exact pair produced
+    /// by the matching `make_move`; using them out of order or with a
+    /// different move corrupts the position.
     pub fn unmake_move(&mut self, move_encoded: Move, undo_info: &UndoInfo) {
         let from = move_encoded.get_from();
         let to = move_encoded.get_to();

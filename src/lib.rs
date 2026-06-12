@@ -7,15 +7,16 @@ mod bitboard;
 
 mod attack_table;
 
+pub mod types;
+
 pub mod core;
 pub mod state;
 
-pub mod fen;
-pub mod pgn;
-pub mod epd;
+pub mod notation;
 
 pub mod evaluation;
 pub mod move_generator;
+pub mod move_generator_pseudo_legal;
 pub mod search;
 pub mod stack_vec;
 pub mod time_control;

@@ -1,26 +1,90 @@
+//! 64-bit bitboard primitive and its core operations.
+//!
+//! A [`BitBoard`] is a `u64` where bit `i` represents the square with
+//! index `i` under the A1 = 0, H8 = 63 ordering used throughout the
+//! engine. Files run within a rank (low bits = A-file), ranks stack
+//! upward (low bits = rank 1).
+//!
+//! The shift helpers move every set bit one step in a compass direction,
+//! masking out the source rank/file first so bits cannot wrap onto the
+//! opposite edge.
+//!
+//! The [`bitboard!`] macro lets tests express boards as ASCII grids — A8
+//! is top-left, H1 is bottom-right, matching how a chess board is drawn.
+
 use crate::core::*;
 
+/// Bitboard: one bit per square, indexed by `Square as u64`.
+///
+/// Constants and helpers live on the [`BitBoardMethods`] trait, which is
+/// implemented for `u64`. The alias keeps call sites self-documenting.
 pub type BitBoard = u64;
 
+/// Bitboard constants and operations.
+///
+/// Implemented for the [`BitBoard`] alias; trait form so the constants
+/// and helpers can be accessed as `BitBoard::EMPTY`,
+/// `bb.shift_north()`, etc.
 pub trait BitBoardMethods {
+    /// An empty board (no bits set).
     const EMPTY: Self;
+    /// A fully-set board (every square present).
+    const FULL: Self;
+    /// Mask of rank 1.
     const FIRST_RANK: Self;
+    /// Mask of rank 8.
     const LAST_RANK: Self;
+    /// Mask of the A-file.
     const FIRST_FILE: Self;
+    /// Mask of the H-file.
     const LAST_FILE: Self;
-    fn repr_string(&self) -> String;
+
+    /// Returns an 8×8 ASCII grid (`*` = set, `_` = unset) with rank 8 on
+    /// top and rank 1 on the bottom. Intended for debugging output.
+    fn to_grid(&self) -> String;
+
+    /// Returns a bitboard with exactly `square` set.
     fn on(square: Square) -> BitBoard;
+
+    /// Mirrors the board vertically (rank 1 ↔ rank 8). Equivalent to a
+    /// byte-reversal of the underlying `u64`.
     fn flip_ranks(self) -> Self;
+
+    /// Mirrors the board horizontally (A-file ↔ H-file) using a three-pass
+    /// SWAR butterfly.
     fn flip_files(self) -> Self;
+
+    /// Shifts every set bit one rank toward rank 8. Bits on rank 8 are
+    /// dropped rather than wrapping.
     fn shift_north(&self) -> Self;
+
+    /// Shifts every set bit one rank toward rank 1.
     fn shift_south(&self) -> Self;
+
+    /// Shifts every set bit one file toward the H-file.
     fn shift_east(&self) -> Self;
+
+    /// Shifts every set bit one file toward the A-file.
     fn shift_west(&self) -> Self;
+
+    /// Shifts every set bit one diagonal step toward H8.
     fn shift_north_east(&self) -> Self;
+
+    /// Shifts every set bit one diagonal step toward A8.
     fn shift_north_west(&self) -> Self;
+
+    /// Shifts every set bit one diagonal step toward H1.
     fn shift_south_east(&self) -> Self;
+
+    /// Shifts every set bit one diagonal step toward A1.
     fn shift_south_west(&self) -> Self;
+
+    /// Pops and returns the least-significant set bit as a [`Square`].
+    /// Returns [`None`] when the board is empty. Mutates `self` in place.
     fn pop_lsb(&mut self) -> Option<Square>;
+
+    /// Returns an iterator over the set squares in least-significant
+    /// bit order.
     fn iter(self) -> BitBoardIterator
     where
         Self: Sized + Into<BitBoard>,
@@ -33,12 +97,13 @@ pub trait BitBoardMethods {
 
 impl BitBoardMethods for BitBoard {
     const EMPTY: Self = 0;
+    const FULL: Self = !0;
     const FIRST_RANK: Self = 0x00000000000000ff;
     const LAST_RANK: Self = 0xff00000000000000;
     const FIRST_FILE: Self = 0x0101010101010101;
     const LAST_FILE: Self = 0x8080808080808080;
 
-    fn repr_string(&self) -> String {
+    fn to_grid(&self) -> String {
         let mut repr = String::new();
         for rank in 0..Rank::NUM {
             for file in 0..File::NUM {
@@ -111,6 +176,9 @@ impl BitBoardMethods for BitBoard {
         Some(Square::index(idx))
     }
 }
+/// Iterator yielding each set [`Square`] of a [`BitBoard`] in
+/// least-significant bit order. Construct via
+/// [`BitBoardMethods::iter`].
 pub struct BitBoardIterator {
     bitboard: BitBoard,
 }
@@ -127,6 +195,28 @@ impl Iterator for BitBoardIterator {
         Some(Square::index(idx))
     }
 }
+
+/// Constructs a `const`-evaluated [`BitBoard`] from an 8×8 ASCII grid.
+///
+/// The grid is written rank 8 first (top) down to rank 1 (bottom), with
+/// each square as `X` (set) or `.` (unset). Internally the rows are
+/// reversed so the resulting `u64` follows the A1 = 0 ordering used
+/// everywhere else.
+///
+/// Compile errors fire on unknown tokens or wrong square counts.
+///
+/// ```ignore
+/// let center = bitboard! {
+///     . . . . . . . .
+///     . . . . . . . .
+///     . . . . . . . .
+///     . . . X X . . .
+///     . . . X X . . .
+///     . . . . . . . .
+///     . . . . . . . .
+///     . . . . . . . .
+/// };
+/// ```
 #[macro_export]
 macro_rules! bitboard {
     (

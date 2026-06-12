@@ -1,22 +1,57 @@
+//! Precomputed attack tables for every piece type.
+//!
+//! Non-sliding pieces (king, knight, pawn) get a flat `[BitBoard; 64]`
+//! keyed by source square. Sliding pieces (rook, bishop, queen) use
+//! **magic bitboards**: for each square we store a relevant-blocker mask,
+//! a magic multiplier, and a right-shift that together hash any blocker
+//! subset into a dense move-board lookup table.
+//!
+//! Magics are searched at startup with [`AttackTable::find_magic`] using
+//! sparse random candidates. The global [`ATTACK_TABLE`] is a
+//! [`Lazy`] singleton.
+
 use once_cell::sync::Lazy;
 use rand::prelude::*;
 
 use crate::bitboard::*;
 use crate::core::*;
 
+/// Per-square magic-bitboard parameters for a sliding piece.
 #[derive(Debug, Default)]
 struct MagicEntry {
+    /// Relevant-blocker mask: squares that can affect this slider's
+    /// attacks from the source square (excludes the source itself and
+    /// the board edges along each ray).
     mask: BitBoard,
+    /// 64-bit multiplier that distributes masked blocker subsets into
+    /// distinct upper bits.
     magic: u64,
+    /// Right-shift applied to `blockers * magic` to extract the index.
+    /// Always `64 - mask.count_ones()`.
     shift: u8,
 }
 
+/// A magic table for one sliding-piece source square.
+///
+/// `boards` is dense and indexed by the hash computed from
+/// [`AttackTable::index_table`]; collisions are allowed only when the
+/// stored move-board already matches (verified during magic search).
 #[derive(Debug, Default)]
 struct MagicTable {
+    /// Magic parameters used to index `boards`.
     entry: MagicEntry,
+    /// Precomputed attack boards, one per masked-blocker hash slot.
     boards: Vec<BitBoard>,
 }
 
+/// Lookup tables for every piece's attack set from every square.
+///
+/// All fields are private; callers use the [`get_pawn`](Self::get_pawn),
+/// [`get_king`](Self::get_king), [`get_knight`](Self::get_knight),
+/// [`get_bishop`](Self::get_bishop), [`get_rook`](Self::get_rook), and
+/// [`get_queen`](Self::get_queen) accessors. The non-sliding arrays are
+/// indexed directly by [`Square`]; the sliding arrays go through a
+/// magic-bitboard hash that also incorporates the current `blockers`.
 pub struct AttackTable {
     king: [BitBoard; Square::NUM],
     white_pawn: [BitBoard; Square::NUM],
@@ -24,16 +59,37 @@ pub struct AttackTable {
     knight: [BitBoard; Square::NUM],
     bishop: [MagicTable; Square::NUM],
     rook: [MagicTable; Square::NUM],
+    /// `line[a][b]`: the full rank, file, or diagonal containing both
+    /// squares (including `a` and `b`), or `0` if they don't share a ray.
+    /// Used for pin-ray lookup during legal move generation.
+    line: [[BitBoard; Square::NUM]; Square::NUM],
+    /// `between[a][b]`: squares strictly between `a` and `b` on a shared
+    /// ray (exclusive of both endpoints), or `0` if they don't share a
+    /// ray. Used to build the check-mask for slider checks.
+    between: [[BitBoard; Square::NUM]; Square::NUM],
 }
 
 impl AttackTable {
+    /// Rank 1 (`a1..h1`) — used to clip southbound shifts and pawn pushes.
     const FIRST_RANK: BitBoard = 0x00000000000000ff;
+    /// Rank 8 — used to clip northbound shifts and pawn pushes.
     const LAST_RANK: BitBoard = 0xff00000000000000;
+    /// The A-file — used to clip westbound shifts so they don't wrap.
     const FIRST_FILE: BitBoard = 0x0101010101010101;
+    /// The H-file — used to clip eastbound shifts so they don't wrap.
     const LAST_FILE: BitBoard = 0x8080808080808080;
+    /// Files A+B — needed for knight jumps that move two files west.
     const FIRST_TWO_FILES: BitBoard = 0x0303030303030303;
+    /// Files G+H — needed for knight jumps that move two files east.
     const LAST_TWO_FILES: BitBoard = 0xc0c0c0c0c0c0c0c0;
 
+    /// Builds all attack tables from scratch.
+    ///
+    /// Non-sliding pieces are populated by running their attack function
+    /// against every single-square bitboard. The sliding tables call
+    /// [`find_magic`](Self::find_magic) per source square.
+    ///
+    /// This is expensive (milliseconds) — call once via [`ATTACK_TABLE`].
     pub fn new() -> AttackTable {
         let simple_pieces_moves =
             |move_generator: fn(BitBoard) -> BitBoard| -> [BitBoard; Square::NUM] {
@@ -67,10 +123,15 @@ impl AttackTable {
         let rook = sliding_pieces_moves(Self::attack_rook, Self::mask_rook);
         let bishop = sliding_pieces_moves(Self::attack_bishop, Self::mask_bishop);
 
+        // Black pawn attacks are derived from white pawn attacks by
+        // vertically flipping both the source square and the resulting
+        // board, which avoids a second symbolic computation.
         let mut black_pawn = [BitBoard::EMPTY; 64];
         for square in Square::all() {
             black_pawn[square.flip_vertical() as usize] = white_pawn[square as usize].flip_ranks();
         }
+
+        let (line, between) = Self::compute_line_and_between();
 
         AttackTable {
             king,
@@ -79,9 +140,15 @@ impl AttackTable {
             knight,
             bishop,
             rook,
+            line,
+            between,
         }
     }
 
+    /// Returns the squares a pawn of `color` on `square` attacks.
+    ///
+    /// Only diagonal capture targets are returned — single and double
+    /// pushes are handled separately in move generation.
     pub fn get_pawn(&self, square: Square, color: Color) -> BitBoard {
         match color {
             Color::White => self.white_pawn[square as usize],
@@ -89,24 +156,39 @@ impl AttackTable {
         }
     }
 
+    /// Returns the squares a king on `square` attacks (the 8-neighborhood
+    /// clipped to the board).
     pub fn get_king(&self, square: Square) -> BitBoard {
         self.king[square as usize]
     }
 
+    /// Returns the squares a knight on `square` attacks.
     pub fn get_knight(&self, square: Square) -> BitBoard {
         self.knight[square as usize]
     }
 
+    /// Returns the squares a bishop on `square` attacks given `blockers`.
+    ///
+    /// `blockers` should be the full occupancy bitboard (both colors);
+    /// the magic table masks it down to the relevant squares internally.
+    /// Friendly-piece filtering happens at the move-generation layer.
     pub fn get_bishop(&self, square: Square, blockers: BitBoard) -> BitBoard {
         let table = &self.bishop[square as usize];
         table.boards[Self::index_table(&table.entry, blockers)]
     }
 
+    /// Returns the squares a rook on `square` attacks given `blockers`.
+    ///
+    /// See [`get_bishop`](Self::get_bishop) for the `blockers` contract.
     pub fn get_rook(&self, square: Square, blockers: BitBoard) -> BitBoard {
         let table = &self.rook[square as usize];
         table.boards[Self::index_table(&table.entry, blockers)]
     }
 
+    /// Returns the squares a queen on `square` attacks given `blockers`.
+    ///
+    /// Computed as the union of the rook and bishop lookups — there is
+    /// no separate queen magic table.
     pub fn get_queen(&self, square: Square, blockers: BitBoard) -> BitBoard {
         let rook_table = &self.rook[square as usize];
         let bishop_table = &self.bishop[square as usize];
@@ -115,12 +197,32 @@ impl AttackTable {
         rook_moves | bishop_moves
     }
 
+    /// Returns the full rank, file, or diagonal containing `a` and `b`
+    /// (both endpoints included), or `0` when the two squares do not
+    /// share a queen-style ray. Symmetric: `get_line(a, b) == get_line(b, a)`.
+    pub fn get_line(&self, a: Square, b: Square) -> BitBoard {
+        self.line[a as usize][b as usize]
+    }
+
+    /// Returns the squares strictly between `a` and `b` on their shared
+    /// ray (both endpoints excluded), or `0` when they do not share one.
+    /// Symmetric: `get_between(a, b) == get_between(b, a)`.
+    pub fn get_between(&self, a: Square, b: Square) -> BitBoard {
+        self.between[a as usize][b as usize]
+    }
+
+    /// Hashes `blockers` into a [`MagicTable::boards`] index.
+    ///
+    /// Steps: mask down to relevant blockers, multiply by the magic, and
+    /// keep the top `64 - shift` bits as the index.
     fn index_table(entry: &MagicEntry, blockers: BitBoard) -> usize {
         let blockers = blockers & entry.mask;
         let hash = blockers.wrapping_mul(entry.magic);
         (hash >> entry.shift) as usize
     }
 
+    /// Searches for a magic multiplier and builds the lookup table for
+    /// one source square.
     fn find_magic(
         move_generator: fn(BitBoard, BitBoard) -> BitBoard,
         mask: BitBoard,
@@ -174,6 +276,14 @@ impl AttackTable {
         }
     }
 
+    /// Attempts to fill `table` using the candidate magic in `entry`.
+    ///
+    /// Walks every (blockers, moveset) pair and writes it at the hashed
+    /// index. A slot from a previous generation is treated as empty;
+    /// within the current generation, a slot already holding a
+    /// *different* moveset means the magic collides and is rejected.
+    /// Constructive collisions (same moveset) are fine and how the table
+    /// stays dense.
     fn try_make_table(
         entry: &MagicEntry,
         occupancies: &[BitBoard],
@@ -194,6 +304,9 @@ impl AttackTable {
         true
     }
 
+    /// Fills squares reachable by shifting `board` north until it hits a
+    /// blocker or the top edge. The blocker square itself is included
+    /// (so captures are encoded), but squares beyond it are not.
     fn slide_north(board: BitBoard, blockers: BitBoard) -> BitBoard {
         let mut result = BitBoard::EMPTY;
         let blockers = blockers.shift_north();
@@ -205,6 +318,7 @@ impl AttackTable {
         result
     }
 
+    /// Southbound ray fill. See [`slide_north`](Self::slide_north).
     fn slide_south(board: BitBoard, blockers: BitBoard) -> BitBoard {
         let mut result = BitBoard::EMPTY;
         let blockers = blockers.shift_south();
@@ -216,6 +330,7 @@ impl AttackTable {
         result
     }
 
+    /// Eastbound ray fill. See [`slide_north`](Self::slide_north).
     fn slide_east(board: BitBoard, blockers: BitBoard) -> BitBoard {
         let mut result = BitBoard::EMPTY;
         let blockers = blockers.shift_east();
@@ -227,6 +342,7 @@ impl AttackTable {
         result
     }
 
+    /// Westbound ray fill. See [`slide_north`](Self::slide_north).
     fn slide_west(board: BitBoard, blockers: BitBoard) -> BitBoard {
         let mut result = BitBoard::EMPTY;
         let blockers = blockers.shift_west();
@@ -238,6 +354,7 @@ impl AttackTable {
         result
     }
 
+    /// Northeast diagonal ray fill. See [`slide_north`](Self::slide_north).
     fn slide_north_east(board: BitBoard, blockers: BitBoard) -> BitBoard {
         let mut result = BitBoard::EMPTY;
         let blockers = blockers.shift_north_east();
@@ -249,6 +366,7 @@ impl AttackTable {
         result
     }
 
+    /// Northwest diagonal ray fill. See [`slide_north`](Self::slide_north).
     fn slide_north_west(board: BitBoard, blockers: BitBoard) -> BitBoard {
         let mut result = BitBoard::EMPTY;
         let blockers = blockers.shift_north_west();
@@ -260,6 +378,7 @@ impl AttackTable {
         result
     }
 
+    /// Southeast diagonal ray fill. See [`slide_north`](Self::slide_north).
     fn slide_south_east(board: BitBoard, blockers: BitBoard) -> BitBoard {
         let mut result = BitBoard::EMPTY;
         let blockers = blockers.shift_south_east();
@@ -271,6 +390,7 @@ impl AttackTable {
         result
     }
 
+    /// Southwest diagonal ray fill. See [`slide_north`](Self::slide_north).
     fn slide_south_west(board: BitBoard, blockers: BitBoard) -> BitBoard {
         let mut result = BitBoard::EMPTY;
         let blockers = blockers.shift_south_west();
@@ -282,6 +402,11 @@ impl AttackTable {
         result
     }
 
+    /// All squares attacked by knights in `board`.
+    ///
+    /// Each of the eight L-jumps is implemented as a shift on `board`
+    /// pre-masked to drop knights that would wrap around files (knights
+    /// on the H-file can't jump further east, etc.).
     fn attack_knight(board: BitBoard) -> BitBoard {
         (!Self::LAST_FILE & board) << (File::NUM * 2 + 1)
             | (!Self::LAST_TWO_FILES & board) << (File::NUM + 2)
@@ -293,11 +418,16 @@ impl AttackTable {
             | (!Self::FIRST_FILE & board) >> (File::NUM * 2 + 1)
     }
 
+    /// White pawn capture targets for every pawn in `board`. Pawns on
+    /// the 8th rank or on the relevant edge file are masked out before
+    /// shifting to avoid wrap-around.
     fn attack_pawn(board: BitBoard) -> BitBoard {
         (!(Self::LAST_FILE | Self::LAST_RANK) & board).shift_north_east()
             | (!(Self::FIRST_FILE | Self::LAST_RANK) & board).shift_north_west()
     }
 
+    /// King attack squares (8-neighborhood) for every king in `board`,
+    /// with edge files/ranks masked off so shifts don't wrap.
     fn attack_king(board: BitBoard) -> BitBoard {
         (!Self::LAST_RANK & board).shift_north()
             | (!Self::FIRST_RANK & board).shift_south()
@@ -309,6 +439,9 @@ impl AttackTable {
             | (!(Self::FIRST_RANK | Self::LAST_FILE) & board).shift_south_east()
     }
 
+    /// Reference (non-magic) bishop attack generator. Used during magic
+    /// search to compute the truth table; runtime queries use
+    /// [`get_bishop`](Self::get_bishop) instead.
     fn attack_bishop(board: BitBoard, blockers: BitBoard) -> BitBoard {
         Self::slide_north_east(board, blockers)
             | Self::slide_north_west(board, blockers)
@@ -316,6 +449,8 @@ impl AttackTable {
             | Self::slide_south_west(board, blockers)
     }
 
+    /// Reference (non-magic) rook attack generator. See
+    /// [`attack_bishop`](Self::attack_bishop).
     fn attack_rook(board: BitBoard, blockers: BitBoard) -> BitBoard {
         Self::slide_north(board, blockers)
             | Self::slide_south(board, blockers)
@@ -323,6 +458,12 @@ impl AttackTable {
             | Self::slide_west(board, blockers)
     }
 
+    /// Relevant-blocker mask for a rook on `board`.
+    ///
+    /// Each ray is extended through an empty board and then trimmed of
+    /// its terminal edge square — a piece on the edge of a ray cannot
+    /// block the attack any further, so it does not affect the hash and
+    /// excluding it shrinks the table.
     fn mask_rook(board: BitBoard) -> BitBoard {
         (Self::slide_north(board, BitBoard::EMPTY) & !Self::LAST_RANK)
             | (Self::slide_south(board, BitBoard::EMPTY) & !Self::FIRST_RANK)
@@ -330,6 +471,80 @@ impl AttackTable {
             | (Self::slide_west(board, BitBoard::EMPTY) & !Self::FIRST_FILE)
     }
 
+    /// Builds the full `line` and `between` lookup tables in one pass.
+    ///
+    /// For each ordered pair of squares we walk the connecting ray once
+    /// (if there is one), accumulating the full line in both directions
+    /// from `a` and the strictly-interior squares between `a` and `b`.
+    /// Pairs that aren't on a rank, file, or diagonal stay at `0`.
+    fn compute_line_and_between() -> (
+        [[BitBoard; Square::NUM]; Square::NUM],
+        [[BitBoard; Square::NUM]; Square::NUM],
+    ) {
+        let mut line = [[BitBoard::EMPTY; Square::NUM]; Square::NUM];
+        let mut between = [[BitBoard::EMPTY; Square::NUM]; Square::NUM];
+
+        for a in Square::all() {
+            for b in Square::all() {
+                if a == b {
+                    continue;
+                }
+
+                let af = (a as i32) % File::NUM as i32;
+                let ar = (a as i32) / File::NUM as i32;
+                let bf = (b as i32) % File::NUM as i32;
+                let br = (b as i32) / File::NUM as i32;
+
+                let df = bf - af;
+                let dr = br - ar;
+
+                let on_ray = df == 0 || dr == 0 || df.abs() == dr.abs();
+                if !on_ray {
+                    continue;
+                }
+
+                let step_f = df.signum();
+                let step_r = dr.signum();
+
+                let on_board = |f: i32, r: i32| {
+                    (0..File::NUM as i32).contains(&f) && (0..Rank::NUM as i32).contains(&r)
+                };
+                let bb_at =
+                    |f: i32, r: i32| BitBoard::on(Square::index((r * File::NUM as i32 + f) as u8));
+
+                let mut line_bb = BitBoard::EMPTY;
+
+                let (mut f, mut r) = (af, ar);
+                while on_board(f, r) {
+                    line_bb |= bb_at(f, r);
+                    f += step_f;
+                    r += step_r;
+                }
+                let (mut f, mut r) = (af - step_f, ar - step_r);
+                while on_board(f, r) {
+                    line_bb |= bb_at(f, r);
+                    f -= step_f;
+                    r -= step_r;
+                }
+
+                let mut between_bb = BitBoard::EMPTY;
+                let (mut f, mut r) = (af + step_f, ar + step_r);
+                while f != bf || r != br {
+                    between_bb |= bb_at(f, r);
+                    f += step_f;
+                    r += step_r;
+                }
+
+                line[a as usize][b as usize] = line_bb;
+                between[a as usize][b as usize] = between_bb;
+            }
+        }
+
+        (line, between)
+    }
+
+    /// Relevant-blocker mask for a bishop on `board`. See
+    /// [`mask_rook`](Self::mask_rook) for the edge-trimming info.
     fn mask_bishop(board: BitBoard) -> BitBoard {
         Self::slide_north_east(board, BitBoard::EMPTY) & !(Self::LAST_RANK | Self::LAST_FILE)
             | Self::slide_north_west(board, BitBoard::EMPTY) & !(Self::LAST_RANK | Self::FIRST_FILE)
@@ -339,6 +554,7 @@ impl AttackTable {
     }
 }
 
+/// Process-wide singleton attack table.
 pub static ATTACK_TABLE: Lazy<AttackTable> = Lazy::new(AttackTable::new);
 
 #[cfg(test)]
@@ -925,5 +1141,203 @@ mod tests {
             . . . . . . . .
             },
         );
+    }
+
+    #[test]
+    fn test_get_line_same_square_is_empty() {
+        let table = AttackTable::new();
+        for square in Square::all() {
+            assert_eq!(table.get_line(square, square), BitBoard::EMPTY);
+            assert_eq!(table.get_between(square, square), BitBoard::EMPTY);
+        }
+    }
+
+    #[test]
+    fn test_get_line_off_ray_pairs_are_empty() {
+        let table = AttackTable::new();
+        // A knight-jump pair: not on any rank, file, or diagonal.
+        assert_eq!(table.get_line(Square::E4, Square::F6), BitBoard::EMPTY);
+        assert_eq!(table.get_between(Square::E4, Square::F6), BitBoard::EMPTY);
+
+        // Same color but no shared ray.
+        assert_eq!(table.get_line(Square::A1, Square::C2), BitBoard::EMPTY);
+        assert_eq!(table.get_between(Square::A1, Square::C2), BitBoard::EMPTY);
+    }
+
+    #[test]
+    fn test_get_line_rank() {
+        let table = AttackTable::new();
+        let rank_one = bitboard! {
+            . . . . . . . .
+            . . . . . . . .
+            . . . . . . . .
+            . . . . . . . .
+            . . . . . . . .
+            . . . . . . . .
+            . . . . . . . .
+            X X X X X X X X
+        };
+        assert_eq!(table.get_line(Square::A1, Square::H1), rank_one);
+        assert_eq!(table.get_line(Square::D1, Square::F1), rank_one);
+
+        let between_d1_h1 = bitboard! {
+            . . . . . . . .
+            . . . . . . . .
+            . . . . . . . .
+            . . . . . . . .
+            . . . . . . . .
+            . . . . . . . .
+            . . . . . . . .
+            . . . . X X X .
+        };
+        assert_eq!(table.get_between(Square::D1, Square::H1), between_d1_h1);
+    }
+
+    #[test]
+    fn test_get_line_file() {
+        let table = AttackTable::new();
+        let a_file = bitboard! {
+            X . . . . . . .
+            X . . . . . . .
+            X . . . . . . .
+            X . . . . . . .
+            X . . . . . . .
+            X . . . . . . .
+            X . . . . . . .
+            X . . . . . . .
+        };
+        assert_eq!(table.get_line(Square::A1, Square::A8), a_file);
+        assert_eq!(table.get_line(Square::A3, Square::A6), a_file);
+
+        let between_a2_a7 = bitboard! {
+            . . . . . . . .
+            . . . . . . . .
+            X . . . . . . .
+            X . . . . . . .
+            X . . . . . . .
+            X . . . . . . .
+            . . . . . . . .
+            . . . . . . . .
+        };
+        assert_eq!(table.get_between(Square::A2, Square::A7), between_a2_a7);
+    }
+
+    #[test]
+    fn test_get_line_main_diagonal() {
+        let table = AttackTable::new();
+        let main_diag = bitboard! {
+            . . . . . . . X
+            . . . . . . X .
+            . . . . . X . .
+            . . . . X . . .
+            . . . X . . . .
+            . . X . . . . .
+            . X . . . . . .
+            X . . . . . . .
+        };
+        assert_eq!(table.get_line(Square::A1, Square::H8), main_diag);
+        assert_eq!(table.get_line(Square::C3, Square::F6), main_diag);
+
+        let between_a1_h8 = bitboard! {
+            . . . . . . . .
+            . . . . . . X .
+            . . . . . X . .
+            . . . . X . . .
+            . . . X . . . .
+            . . X . . . . .
+            . X . . . . . .
+            . . . . . . . .
+        };
+        assert_eq!(table.get_between(Square::A1, Square::H8), between_a1_h8);
+    }
+
+    #[test]
+    fn test_get_line_anti_diagonal() {
+        let table = AttackTable::new();
+        let anti_diag = bitboard! {
+            X . . . . . . .
+            . X . . . . . .
+            . . X . . . . .
+            . . . X . . . .
+            . . . . X . . .
+            . . . . . X . .
+            . . . . . . X .
+            . . . . . . . X
+        };
+        assert_eq!(table.get_line(Square::A8, Square::H1), anti_diag);
+        assert_eq!(table.get_line(Square::D5, Square::F3), anti_diag);
+
+        let between_a8_h1 = bitboard! {
+            . . . . . . . .
+            . X . . . . . .
+            . . X . . . . .
+            . . . X . . . .
+            . . . . X . . .
+            . . . . . X . .
+            . . . . . . X .
+            . . . . . . . .
+        };
+        assert_eq!(table.get_between(Square::A8, Square::H1), between_a8_h1);
+    }
+
+    #[test]
+    fn test_get_between_adjacent_squares_is_empty() {
+        let table = AttackTable::new();
+        // Adjacent along a ray: line is the whole ray, between is empty.
+        assert_eq!(table.get_between(Square::A1, Square::B1), BitBoard::EMPTY);
+        assert_eq!(table.get_between(Square::E4, Square::E5), BitBoard::EMPTY);
+        assert_eq!(table.get_between(Square::D4, Square::E5), BitBoard::EMPTY);
+
+        // But the lines are still non-empty (the full rank/file/diagonal).
+        assert_ne!(table.get_line(Square::A1, Square::B1), BitBoard::EMPTY);
+        assert_ne!(table.get_line(Square::E4, Square::E5), BitBoard::EMPTY);
+        assert_ne!(table.get_line(Square::D4, Square::E5), BitBoard::EMPTY);
+    }
+
+    #[test]
+    fn test_get_line_is_symmetric() {
+        let table = AttackTable::new();
+        for a in Square::all() {
+            for b in Square::all() {
+                assert_eq!(
+                    table.get_line(a, b),
+                    table.get_line(b, a),
+                    "line not symmetric for ({:?}, {:?})",
+                    a,
+                    b
+                );
+                assert_eq!(
+                    table.get_between(a, b),
+                    table.get_between(b, a),
+                    "between not symmetric for ({:?}, {:?})",
+                    a,
+                    b
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_get_between_is_subset_of_line_minus_endpoints() {
+        let table = AttackTable::new();
+        for a in Square::all() {
+            for b in Square::all() {
+                if a == b {
+                    continue;
+                }
+                let line = table.get_line(a, b);
+                let between = table.get_between(a, b);
+                // Between is a subset of the line.
+                assert_eq!(between & !line, BitBoard::EMPTY);
+                // Between never contains the endpoints.
+                assert_eq!(between & BitBoard::on(a), BitBoard::EMPTY);
+                assert_eq!(between & BitBoard::on(b), BitBoard::EMPTY);
+                // If line is non-empty it includes both endpoints.
+                if line != BitBoard::EMPTY {
+                    assert_ne!(line & BitBoard::on(a), BitBoard::EMPTY);
+                    assert_ne!(line & BitBoard::on(b), BitBoard::EMPTY);
+                }
+            }
+        }
     }
 }

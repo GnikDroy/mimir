@@ -1,19 +1,46 @@
+//! Zobrist hashing for [`GameState`].
+//!
+//! Each game-state feature (piece-on-square, side to move, castling
+//! rights, en passant file) maps to a random 64-bit key generated once
+//! at startup. The position hash is the XOR of every active key.
+//! Because XOR is its own inverse, [`GameState::make_move`] and
+//! [`GameState::unmake_move`] can keep the hash current incrementally
+//! by XOR-ing out the keys for departing features and XOR-ing in the
+//! keys for arriving ones — far cheaper than recomputing from scratch.
+//!
+//! En passant is keyed by *file* only (not full square), matching the
+//! standard Polyglot convention.
+
 use crate::{core::*, BitBoardMethods, GameState};
 use rand::prelude::*;
 
+/// 64-bit position hash used by the transposition table and the
+/// repetition detector.
 pub type ZobristHash = u64;
 
+/// Random key tables for every feature that contributes to the
+/// position hash.
 pub struct ZobristHasher {
+    /// `square[color][piece][square]` — key for a piece of that color
+    /// sitting on that square.
     pub square: [[[ZobristHash; Square::NUM]; Piece::NUM]; Color::NUM],
+    /// XORed in when black is to move; absent when white is to move.
     pub side_is_black: ZobristHash,
+    /// Indexed by the 4-bit packed castling-rights mask
+    /// (`KQkq` = `0b1111`). All 16 combinations are pre-generated so
+    /// updates are a single lookup + XOR.
     pub castling_rights: [ZobristHash; 16],
+    /// One key per square (indexed by file; only the file of the en
+    /// passant target square matters).
     pub en_passant: [ZobristHash; Square::NUM],
 }
 
+/// Process-wide singleton hash key table.
 pub static ZOBRIST_HASHER: once_cell::sync::Lazy<ZobristHasher> =
     once_cell::sync::Lazy::new(ZobristHasher::new);
 
 impl ZobristHasher {
+    /// Generates a fresh set of random keys.
     fn new() -> ZobristHasher {
         let mut rng = rand::rng();
         let table = std::array::from_fn(|_| {
@@ -32,6 +59,8 @@ impl ZobristHasher {
         }
     }
 
+    /// Computes the Zobrist hash of `state` from scratch.
+    /// Intended for initial hashing.
     pub fn hash(&self, state: &GameState) -> ZobristHash {
         let mut key = 0;
 
@@ -70,8 +99,6 @@ impl ZobristHasher {
 // If we want to test the ZobristHasher, we should test it against the GameState's hash to ensure they match.
 #[cfg(test)]
 mod tests {
-    use crate::move_generator::MoveList;
-
     use super::*;
 
     #[test]
@@ -110,7 +137,7 @@ mod tests {
         let (current_moves, rest) = moves_list.split_first_mut().unwrap();
 
         current_moves.clear();
-        state.generate_valid_moves(current_moves);
+        state.generate_moves(current_moves);
 
         for &mv in current_moves.iter() {
             let prev_hash = state.zobrist_hash;

@@ -1,6 +1,6 @@
 //! Single-pass strict-legal move generation.
 //!
-//! Builds a per-position [`LegalCtx`] (pins, king-danger, check-mask) and
+//! Builds a per-position legality context (pins, king-danger, check-mask) and
 //! AND-s each piece's pseudo-legal targets against it. The only fallback
 //! to make/unmake is en passant, to catch the horizontal-pin edge case.
 

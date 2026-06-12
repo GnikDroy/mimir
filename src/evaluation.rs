@@ -3,9 +3,9 @@
 //! The evaluator computes two parallel scores per side — a middlegame
 //! score (`mg`) and an endgame score (`eg`) — by summing material
 //! values and PSTs read from each piece's square. A single phase
-//! counter, accumulated from per-piece weights in [`PIECE_PHASE_WEIGHTS`],
-//! tracks how far the position has progressed: 24 means starting
-//! material, 0 means a bare king-and-pawn endgame. The returned score
+//! counter, accumulated from per-piece weights, tracks how far the
+//! position has progressed from the opening toward a bare king-and-pawn
+//! endgame. The returned score
 //! is the linear interpolation between `mg` and `eg` by that phase,
 //! plus a small tempo bonus for the side to move. Scores are always
 //! reported from the side-to-move's perspective (positive = good for us).
@@ -222,18 +222,18 @@ pub const MATE_SCORE: i32 = i32::MAX / 2;
 ///
 /// Walks every piece on the board exactly once to accumulate four
 /// quantities: middlegame and endgame scores for each color, plus the
-/// game-phase counter. Each piece contributes:
-/// - its color's middlegame material value and PST entry,
-/// - its color's endgame material value and PST entry,
-/// - its phase weight from [`PIECE_PHASE_WEIGHTS`].
+/// game-phase counter. Each piece contributes its color's middlegame
+/// and endgame material values, the matching PST entries, and a phase
+/// weight toward the tapering counter.
 ///
 /// Black uses the same PSTs as white after applying
 /// [`Square::flip_vertical`] to the lookup index.
 ///
-/// The final score is `(mg*phase + eg*(PHASE_LIMIT-phase)) / PHASE_LIMIT`
-/// from the side to move's perspective, plus a +10 cp tempo bonus
-/// favoring the side on move. Phase is clamped to [`PHASE_LIMIT`] so
-/// promotion gluts cannot push past full middlegame weighting.
+/// The final score linearly interpolates between the middlegame and
+/// endgame scores by the (clamped) phase counter, from the side to
+/// move's perspective, plus a +10 cp tempo bonus favoring the side on
+/// move. The clamp keeps promotion gluts from overshooting full
+/// middlegame weighting.
 pub fn evaluate(state: &GameState) -> i32 {
     let side_to_move = state.side_to_move;
     let mut mg = [0i32; 2];

@@ -135,8 +135,8 @@ impl TimeControl {
     }
 
     /// Starts a new search window: stamps the start instant and computes
-    /// a deadline using [`move_time_budget`](Self::move_time_budget).
-    /// Must be called before the search begins for
+    /// a deadline from the current clock state. Must be called before
+    /// the search begins for
     /// [`is_time_up`](Self::is_time_up) and
     /// [`get_elapsed`](Self::get_elapsed) to behave correctly.
     pub fn set_search_deadline(&mut self, side_to_move: Color) {

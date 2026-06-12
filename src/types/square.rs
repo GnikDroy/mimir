@@ -43,7 +43,7 @@ impl Square {
 
     /// Iterator over every square from `A1` to `H8` in discriminant order.
     #[inline(always)]
-    pub fn all() -> impl Iterator<Item = Square> {
+    pub fn all() -> impl ExactSizeIterator<Item = Square> + DoubleEndedIterator + Clone {
         (0..Square::NUM).map(|i| Self::index(i as u8))
     }
 

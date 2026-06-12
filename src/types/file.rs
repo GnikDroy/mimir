@@ -36,7 +36,7 @@ impl File {
 
     /// Iterator over every file from `A` to `H`.
     #[inline(always)]
-    pub fn all() -> impl Iterator<Item = File> {
+    pub fn all() -> impl ExactSizeIterator<Item = File> + DoubleEndedIterator + Clone {
         (0..File::NUM).map(Self::index)
     }
 }

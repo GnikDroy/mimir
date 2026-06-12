@@ -37,7 +37,7 @@ impl Rank {
 
     /// Iterator over every rank from `First` to `Eighth`.
     #[inline(always)]
-    pub fn all() -> impl Iterator<Item = Rank> {
+    pub fn all() -> impl ExactSizeIterator<Item = Rank> + DoubleEndedIterator + Clone {
         (0..Rank::NUM).map(Self::index)
     }
 }

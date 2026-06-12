@@ -100,6 +100,12 @@ pub enum UCICommand {
     },
     /// `quit` — exit the engine.
     Quit,
+    /// `display` — non-standard extension; print the current board.
+    Display,
+    /// `eval` — non-standard extension; print the static evaluation.
+    Eval,
+    /// `perft <depth>` — non-standard extension; print perft divide.
+    Perft(u8),
     /// Any input that did not parse as a known command. The wrapped
     /// string is the offending line (or a short tag identifying which
     /// sub-parse failed).
@@ -139,6 +145,9 @@ impl UCICommand {
             "ponderhit" => Self::PonderHit,
             "setoption" => Self::parse_setoption(parts.collect()),
             "quit" => Self::Quit,
+            "display" => Self::Display,
+            "eval" => Self::Eval,
+            "perft" => Self::parse_perft(parts.collect()),
             _ => Self::Unknown(line.to_string()),
         }
     }
@@ -266,6 +275,14 @@ impl UCICommand {
         Self::SetOption {
             name: name_parts.join(" "),
             value,
+        }
+    }
+
+    /// Parses the tail of a `perft` command into a depth value.
+    fn parse_perft(tokens: Vec<&str>) -> Self {
+        match tokens.first().and_then(|t| t.parse::<u8>().ok()) {
+            Some(depth) => Self::Perft(depth),
+            None => Self::Unknown("perft".to_string()),
         }
     }
 
@@ -510,6 +527,36 @@ mod tests {
                 value: Some("some value".to_string()),
             }
         );
+    }
+
+    #[test]
+    fn test_parse_display() {
+        let cmd = UCICommand::parse("display");
+        assert_eq!(cmd, UCICommand::Display);
+    }
+
+    #[test]
+    fn test_parse_eval() {
+        let cmd = UCICommand::parse("eval");
+        assert_eq!(cmd, UCICommand::Eval);
+    }
+
+    #[test]
+    fn test_parse_perft() {
+        let cmd = UCICommand::parse("perft 5");
+        assert_eq!(cmd, UCICommand::Perft(5));
+    }
+
+    #[test]
+    fn test_parse_perft_missing_depth() {
+        let cmd = UCICommand::parse("perft");
+        assert_eq!(cmd, UCICommand::Unknown("perft".to_string()));
+    }
+
+    #[test]
+    fn test_parse_perft_invalid_depth() {
+        let cmd = UCICommand::parse("perft abc");
+        assert_eq!(cmd, UCICommand::Unknown("perft".to_string()));
     }
 
     #[test]

@@ -35,7 +35,7 @@ impl Piece {
 
     /// Iterator over every piece kind in discriminant order.
     #[inline(always)]
-    pub fn all() -> impl Iterator<Item = Piece> {
+    pub fn all() -> impl ExactSizeIterator<Item = Piece> + DoubleEndedIterator + Clone {
         (0..Piece::NUM).map(|i| Self::index(i as u8))
     }
 }

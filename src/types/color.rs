@@ -27,7 +27,7 @@ impl Color {
 
     /// Iterator over every colour in discriminant order.
     #[inline(always)]
-    pub fn all() -> impl Iterator<Item = Color> {
+    pub fn all() -> impl ExactSizeIterator<Item = Color> + DoubleEndedIterator + Clone {
         (0..Color::NUM).map(Self::index)
     }
 

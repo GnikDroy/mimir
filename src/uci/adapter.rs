@@ -19,7 +19,9 @@ use std::sync::{
 use std::thread;
 use std::time::Duration;
 
+use crate::bitboard::{BitBoard, BitBoardMethods};
 use crate::core::*;
+use crate::evaluation::evaluate;
 use crate::search::{SearchResult, Searcher};
 use crate::state::GameState;
 
@@ -168,9 +170,94 @@ impl UCIAdapter {
                 self.next_generation();
                 return false;
             }
+            UCICommand::Display => {
+                let mut out = self.out.lock().unwrap();
+                Self::write_display(&self.state, &mut *out).ok();
+            }
+            UCICommand::Eval => {
+                let side = match self.state.side_to_move {
+                    Color::White => "white",
+                    Color::Black => "black",
+                };
+                let mut out = self.out.lock().unwrap();
+                writeln!(out, "{} cp ({} to move)", evaluate(&self.state), side).ok();
+            }
+            UCICommand::Perft(depth) => {
+                let mut out = self.out.lock().unwrap();
+                Self::write_perft_divide(&mut self.state, depth, &mut *out).ok();
+            }
             UCICommand::Unknown(_) => {}
         }
         true
+    }
+
+    /// Renders the position to `writer` as an ASCII board plus FEN and Zobrist key.
+    fn write_display<W: std::io::Write>(state: &GameState, writer: &mut W) -> std::io::Result<()> {
+        const SEPARATOR: &str = " +---+---+---+---+---+---+---+---+";
+
+        for rank in Rank::all().rev() {
+            writeln!(writer, "{}", SEPARATOR)?;
+            write!(writer, " |")?;
+            for file in File::all() {
+                let square = Square::index((rank as u8) * 8u8 + file as u8);
+                let ch = Self::piece_char_at(state, square).unwrap_or(' ');
+                write!(writer, " {} |", ch)?;
+            }
+            writeln!(writer, " {}", rank as u8 + 1)?;
+        }
+        writeln!(writer, "{}", SEPARATOR)?;
+        writeln!(writer, "   a   b   c   d   e   f   g   h")?;
+        writeln!(writer)?;
+        writeln!(writer, "Fen: {}", state.to_fen())?;
+        writeln!(writer, "Key: {:016X}", state.zobrist_hash)?;
+        Ok(())
+    }
+
+    /// Returns the FEN-style character for the piece occupying `square`,
+    /// or `None` when the square is empty.
+    fn piece_char_at(state: &GameState, square: Square) -> Option<char> {
+        let mask = BitBoard::on(square);
+        for color in Color::all() {
+            for piece in Piece::all() {
+                if state.pieces[color as usize][piece as usize] & mask != 0 {
+                    let mut piece_char = match piece {
+                        Piece::King => 'K',
+                        Piece::Queen => 'Q',
+                        Piece::Rook => 'R',
+                        Piece::Bishop => 'B',
+                        Piece::Knight => 'N',
+                        Piece::Pawn => 'P',
+                    };
+                    if color == Color::Black {
+                        piece_char = piece_char.to_ascii_lowercase();
+                    }
+                    return Some(piece_char);
+                }
+            }
+        }
+        None
+    }
+
+    /// Runs perft to `depth` from the current position and writes a
+    /// Stockfish-style divided node count followed by the total.
+    fn write_perft_divide<W: std::io::Write>(
+        state: &mut GameState,
+        depth: u8,
+        writer: &mut W,
+    ) -> std::io::Result<()> {
+        let mut total = 0u64;
+        if depth > 0 {
+            for (mv, count) in state.perft_divide(depth) {
+                if count == 0 {
+                    continue;
+                }
+                writeln!(writer, "{}: {}", mv.to_uci(), count)?;
+                total += count;
+            }
+        }
+        writeln!(writer)?;
+        writeln!(writer, "Nodes searched: {}", total)?;
+        Ok(())
     }
 
     /// Resets the position to `fen` (or the standard start when
@@ -492,6 +579,50 @@ mod tests {
         assert!(output_str.contains("id author gnikdroy"));
         assert!(output_str.contains("uciok"));
         assert!(output_str.contains("readyok"));
+    }
+
+    #[test]
+    fn test_handle_display_command() {
+        let (writer, output) = SharedBuffer::new();
+        let mut adapter = UCIAdapter::with_writer(Box::new(writer));
+
+        let should_continue = adapter.handle_command(UCICommand::Display);
+        assert!(should_continue);
+
+        let guard = output.lock().unwrap();
+        let output_str = String::from_utf8_lossy(&guard);
+        assert!(
+            output_str.contains("Fen: rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1")
+        );
+        assert!(output_str.contains("Key:"));
+        assert!(output_str.contains("a   b   c   d   e   f   g   h"));
+    }
+
+    #[test]
+    fn test_handle_eval_command() {
+        let (writer, output) = SharedBuffer::new();
+        let mut adapter = UCIAdapter::with_writer(Box::new(writer));
+
+        let should_continue = adapter.handle_command(UCICommand::Eval);
+        assert!(should_continue);
+
+        let guard = output.lock().unwrap();
+        let output_str = String::from_utf8_lossy(&guard);
+        assert!(output_str.contains("cp"));
+        assert!(output_str.contains("white to move"));
+    }
+
+    #[test]
+    fn test_handle_perft_command() {
+        let (writer, output) = SharedBuffer::new();
+        let mut adapter = UCIAdapter::with_writer(Box::new(writer));
+
+        let should_continue = adapter.handle_command(UCICommand::Perft(1));
+        assert!(should_continue);
+
+        let guard = output.lock().unwrap();
+        let output_str = String::from_utf8_lossy(&guard);
+        assert!(output_str.contains("Nodes searched: 20"));
     }
 
     #[test]

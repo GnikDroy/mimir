@@ -32,7 +32,7 @@ impl PromotionPiece {
 
     /// Iterator over every promotion target in discriminant order.
     #[inline(always)]
-    pub fn all() -> impl Iterator<Item = PromotionPiece> {
+    pub fn all() -> impl ExactSizeIterator<Item = PromotionPiece> + DoubleEndedIterator + Clone {
         (0..PromotionPiece::NUM).map(Self::index)
     }
 

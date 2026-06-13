@@ -98,7 +98,7 @@ impl SAN {
     ///
     /// `mv` must be legal in `state`. `state` is used only as scratch
     /// space for disambiguation and is not mutated overall.
-    fn encode_move(mv: Move, state: &mut GameState) -> String {
+    pub fn encode_move(mv: Move, state: &mut GameState) -> String {
         let mut san = String::new();
         // pawns are handled differently than other pieces
         if mv.get_moved_piece() == Piece::Pawn {

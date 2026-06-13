@@ -414,7 +414,7 @@ impl MoveMethods for Move {
 }
 
 /// The maximum number of possible chess moves in any given legal position
-const MAX_MOVE_COUNT: usize = 256;
+pub const MAX_MOVE_COUNT: usize = 256;
 
 /// This type is used to store possible chess moves in a position
 /// WARN: Do not use this to store moves in a game as it is insufficient.

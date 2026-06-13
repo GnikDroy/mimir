@@ -2,6 +2,8 @@ use std::time::Duration;
 
 use crate::core::*;
 use crate::evaluation::{evaluate, MATE_SCORE};
+use crate::move_score::MoveScore;
+use crate::move_scorer::MoveScorer;
 use crate::stack_vec::StackVec;
 use crate::state::GameState;
 use crate::time_control::TimeControl;
@@ -59,13 +61,11 @@ pub type ZobristHashList = StackVec<ZobristHash, MAX_PLY>;
 pub type PvList = StackVec<Move, MAX_PLY>;
 
 pub struct Searcher {
-    move_pool: Box<[MoveList; MAX_PLY]>,
     position_history: Box<ZobristHashList>,
     transposition_table: TranspositionTable,
     time_control: TimeControl,
     analytics: SearchAnalytics,
-    killer_moves: Box<[[Move; 2]; MAX_PLY]>,
-    history: Box<[[[Move; Square::NUM]; Square::NUM]; Color::NUM]>,
+    move_scorer: MoveScorer,
     // Triangular PV table: pv_table[ply][0..pv_length[ply]] is the PV
     // discovered at this ply. On a new best move at a node we write
     // the move into slot 0 and copy the child's PV after it.
@@ -73,9 +73,7 @@ pub struct Searcher {
     pv_length: Box<[u8; MAX_PLY]>,
 }
 
-const MAX_PLY: usize = 64;
-const KILLER_MOVES_PER_PLY: usize = 2;
-const HISTORY_BONUS_MULTIPLIER: u32 = 8;
+pub const MAX_PLY: usize = 64;
 
 // Check for timeouts every N nodes in alpha-beta and every M quiescence nodes.
 const NODE_CHECK_INTERVAL: u64 = 256;
@@ -83,67 +81,20 @@ const QUIESCENCE_NODE_CHECK_INTERVAL: u64 = 128;
 
 impl Searcher {
     pub fn new() -> Self {
-        let move_pool = Box::new([MoveList::default(); MAX_PLY]);
-        let killer_moves = Box::new([[0u32; KILLER_MOVES_PER_PLY]; MAX_PLY]);
-        let history = Box::new([[[0u32; Square::NUM]; Square::NUM]; Color::NUM]);
         let pv_table = Box::new([[0u32; MAX_PLY]; MAX_PLY]);
         let pv_length = Box::new([0u8; MAX_PLY]);
 
         let time_control = TimeControl::new(Duration::from_mins(1), Duration::from_secs(0));
 
         Searcher {
-            move_pool,
             position_history: Box::new(ZobristHashList::default()),
-            killer_moves,
-            history,
+            move_scorer: MoveScorer::new(),
             pv_table,
             pv_length,
             transposition_table: TranspositionTable::new(),
             analytics: SearchAnalytics::default(),
             time_control,
         }
-    }
-
-    /// Apply `mv`, recurse into `alpha_beta` with negated bounds, undo,
-    /// and return the score in the parent's frame. Returns `None` on timeout.
-    #[inline]
-    fn negamax_child(
-        &mut self,
-        state: &mut GameState,
-        mv: Move,
-        depth: u8,
-        ply: usize,
-        alpha: i32,
-        beta: i32,
-    ) -> Option<i32> {
-        self.position_history.push(state.zobrist_hash);
-        let undo = state.make_move(mv);
-        let result = self
-            .alpha_beta(state, depth - 1, ply + 1, -beta, -alpha)
-            .map(|(_, e)| -e);
-        state.unmake_move(mv, &undo);
-        self.position_history.pop();
-        result
-    }
-
-    /// Quiescence counterpart to `negamax_child`. Apply `mv`, recurse into
-    /// `quiescence` with negated bounds, undo, and return the score in the
-    /// parent's frame. Returns `None` on timeout.
-    #[inline]
-    fn quiescence_child(
-        &mut self,
-        state: &mut GameState,
-        mv: Move,
-        ply: usize,
-        alpha: i32,
-        beta: i32,
-    ) -> Option<i32> {
-        self.position_history.push(state.zobrist_hash);
-        let undo = state.make_move(mv);
-        let result = self.quiescence(state, ply + 1, -beta, -alpha).map(|e| -e);
-        state.unmake_move(mv, &undo);
-        self.position_history.pop();
-        result
     }
 
     /// Append `mv` followed by the child's PV into this ply's PV slot.
@@ -168,15 +119,16 @@ impl Searcher {
     fn root_pv(&self, state: &GameState) -> PvList {
         let mut pv = PvList::default();
         let len = self.pv_length[0] as usize;
-        for i in 0..len {
-            pv.push(self.pv_table[0][i]);
-        }
 
         let mut working_state = *state;
         let mut seen = ZobristHashList::default();
         seen.push(working_state.zobrist_hash);
-        for i in 0..len {
-            working_state.make_move(pv[i]);
+
+        // Copy the in-search PV into the output and advance working_state
+        // to its leaf so the TT-replay loop below picks up from there.
+        for &mv in &self.pv_table[0][..len] {
+            pv.push(mv);
+            working_state.make_move(mv);
             if seen.len() < MAX_PLY {
                 seen.push(working_state.zobrist_hash);
             }
@@ -238,17 +190,10 @@ impl Searcher {
         }
         // Earliest index reachable without crossing an irreversible move.
         let earliest = n.saturating_sub(reversible);
-        let mut i = n - 4;
-        loop {
-            if self.position_history[i] == hash {
-                return true;
-            }
-            if i < earliest + 2 {
-                break;
-            }
-            i -= 2;
-        }
-        false
+        (earliest..=n - 4)
+            .rev()
+            .step_by(2)
+            .any(|i| self.position_history[i] == hash)
     }
 
     pub fn update_clock(
@@ -290,97 +235,6 @@ impl Searcher {
         }
     }
 
-    /// Simple static move ordering score: promotions highest, then captures (MVV-LVA),
-    /// then castles, double pawn pushes, then quiet moves with history bonus, and killer moves.
-    /// all of them are given bonuses from transposition table move if it matches, to ensure we search the tt move first
-    fn score_move_main(
-        mv: Move,
-        state: &GameState,
-        tt_move: Option<Move>,
-        killer_moves: &[Move; KILLER_MOVES_PER_PLY],
-        history: &[[[Move; Square::NUM]; Square::NUM]; Color::NUM],
-    ) -> i32 {
-        // Material values aligned with `core::Piece` ordering: King, Queen, Rook, Bishop, Knight, Pawn
-        const PIECE_VALUES: [i32; Piece::NUM] = [20_000, 900, 500, 330, 320, 100];
-
-        let tt_bonus = if Some(mv) == tt_move { 1_000_000 } else { 0 };
-
-        // Check if move is a killer move (quiet move that caused cutoff at this depth)
-        let killer_bonus = if killer_moves.contains(&mv) { 9_000 } else { 0 };
-
-        // Get history bonus for this move. History tracks quiet moves that caused cutoffs.
-        let from = mv.get_from() as usize;
-        let to = mv.get_to() as usize;
-        let history_bonus =
-            (history[state.side_to_move as usize][from][to] / HISTORY_BONUS_MULTIPLIER) as i32;
-
-        match mv.get_type() {
-            t if t.is_promotion() => 100_000 + tt_bonus,
-            MoveType::Capture | MoveType::EnPassant => {
-                let captured = mv.get_captured_piece().unwrap_or(Piece::Pawn) as usize;
-                let moved = mv.get_moved_piece() as usize;
-                // MVV-LVA style: prefer capturing high-value pieces with low-value attackers
-                ((PIECE_VALUES[captured] * 100) - PIECE_VALUES[moved]) + tt_bonus
-            }
-            _ => history_bonus + killer_bonus + tt_bonus,
-        }
-    }
-
-    /// Simple static move ordering score: promotions highest, then captures (MVV-LVA),
-    /// then castles, double pawn pushes, then quiet moves with history bonus, and killer moves.
-    /// all of them are given bonuses from transposition table move if it matches, to ensure we search the tt move first
-    fn score_move_quiescence(mv: Move, tt_move: Option<Move>) -> i32 {
-        // Material values aligned with `core::Piece` ordering: King, Queen, Rook, Bishop, Knight, Pawn
-        const PIECE_VALUES: [i32; Piece::NUM] = [20_000, 900, 500, 330, 320, 100];
-
-        let tt_bonus = if Some(mv) == tt_move { 1_000_000 } else { 0 };
-
-        match mv.get_type() {
-            t if t.is_promotion() => 100_000 + tt_bonus,
-            MoveType::Capture | MoveType::EnPassant => {
-                let captured = mv.get_captured_piece().unwrap_or(Piece::Pawn) as usize;
-                let moved = mv.get_moved_piece() as usize;
-                // MVV-LVA style: prefer capturing high-value pieces with low-value attackers
-                ((PIECE_VALUES[captured] * 100) - PIECE_VALUES[moved]) + tt_bonus
-            }
-            _ => tt_bonus,
-        }
-    }
-
-    /// Add a killer move at the given ply. Maintains up to 2 killer moves per ply.
-    /// When a new killer move is added, the first one becomes the second and the new one becomes first.
-    #[inline]
-    fn update_killer(&mut self, mv: Move, ply: usize) {
-        let killers = &mut self.killer_moves[ply];
-
-        // Don't add if it's already the primary killer
-        if killers[0] == mv {
-            return;
-        }
-
-        // Shift and add new killer
-        killers[1] = killers[0];
-        killers[0] = mv;
-    }
-
-    /// Update history score for a move that caused a beta cutoff.
-    /// History heuristic tracks quiet moves that lead to cutoffs and improves their move ordering.
-    /// The history bonus is scaled and capped to prevent overflow and control its influence.
-    #[inline]
-    fn update_history(&mut self, mv: Move, depth: u8, side: Color) {
-        let from = mv.get_from() as usize;
-        let to = mv.get_to() as usize;
-
-        // Add a bonus based on depth (deeper moves that cause cutoffs are more valuable)
-        let bonus = (depth as u32) * (depth as u32) * HISTORY_BONUS_MULTIPLIER;
-
-        // Cap history values to prevent overflow and unbounded growth
-        const HISTORY_MAX: u32 = u32::MAX / 2;
-        self.history[side as usize][from][to] = self.history[side as usize][from][to]
-            .saturating_add(bonus)
-            .min(HISTORY_MAX);
-    }
-
     /// Iterative deepening search: tries depths 1, 2, 3, ... until time/depth limit
     /// Returns the best move and evaluation found at the deepest completed depth
     pub fn search(
@@ -393,7 +247,7 @@ impl Searcher {
         self.analytics = SearchAnalytics::default();
 
         // Clear killer moves
-        self.killer_moves.fill([0u32; KILLER_MOVES_PER_PLY]);
+        self.move_scorer.clear_killers();
 
         // Clear PV table lengths. The data array doesn't need clearing —
         // pv_length controls which slots are read.
@@ -512,35 +366,46 @@ impl Searcher {
             }
         }
 
-        // We order moves to improve alpha-beta cutoffs.
-        let move_count = {
-            let moves = &mut self.move_pool[ply];
-            moves.clear();
-            state.generate_moves(moves);
-
-            let tt_move = tt_entry.and_then(|entry| entry.best_move);
-            let killer_moves = &self.killer_moves[ply];
-            moves.sort_by_key(|&mv| {
-                -Searcher::score_move_main(mv, state, tt_move, killer_moves, &self.history)
-            });
-
-            moves.len()
-        };
+        // Generate and score moves into a stack-local buffer.
+        let tt_move = tt_entry.and_then(|entry| entry.best_move);
+        let mut buf = MoveScore::new();
+        state.generate_moves(buf.moves_mut());
+        buf.score_main(&self.move_scorer, state, tt_move, ply);
 
         let mut best_move = None;
         let mut best_eval = i32::MIN / 2;
-        for i in 0..move_count {
-            let mv = self.move_pool[ply][i];
-
+        for (i, mv) in buf.ordered().enumerate() {
             // Principal Variation Search: full window on the first move, null-window
             // probe on the rest, re-search only when a probe falls inside (alpha, beta).
             let eval = if i == 0 {
-                self.negamax_child(state, mv, depth, ply, alpha, beta)?
+                self.position_history.push(state.zobrist_hash);
+                let undo = state.make_move(mv);
+                let eval = self
+                    .alpha_beta(state, depth - 1, ply + 1, -beta, -alpha)
+                    .map(|(_, e)| -e);
+                state.unmake_move(mv, &undo);
+                self.position_history.pop();
+                eval?
             } else {
-                let scout = self.negamax_child(state, mv, depth, ply, alpha, alpha + 1)?;
+                self.position_history.push(state.zobrist_hash);
+                let undo = state.make_move(mv);
+                let scout = self
+                    .alpha_beta(state, depth - 1, ply + 1, -alpha - 1, -alpha)
+                    .map(|(_, e)| -e);
+                state.unmake_move(mv, &undo);
+                self.position_history.pop();
+                let scout = scout?;
+
                 if scout > alpha && scout < beta {
                     self.analytics.pvs_re_searches += 1;
-                    self.negamax_child(state, mv, depth, ply, alpha, beta)?
+                    self.position_history.push(state.zobrist_hash);
+                    let undo = state.make_move(mv);
+                    let eval = self
+                        .alpha_beta(state, depth - 1, ply + 1, -beta, -alpha)
+                        .map(|(_, e)| -e);
+                    state.unmake_move(mv, &undo);
+                    self.position_history.pop();
+                    eval?
                 } else {
                     scout
                 }
@@ -564,18 +429,19 @@ impl Searcher {
                 if !mv.is_capture() && !mv.is_promotion() {
                     // Store killer moves (per ply) if it's a quiet move
                     // that cause a cutoff at this depth.
-                    self.update_killer(mv, ply);
+                    self.move_scorer.update_killer(mv, ply);
 
                     // History heuristic tracks quiet moves that lead to cutoffs regardless of depth.
                     // Even a shallow cutoff can indicate a move that is good in general.
-                    self.update_history(mv, depth, state.side_to_move);
+                    self.move_scorer
+                        .update_history(mv, depth, state.side_to_move);
                 }
                 break;
             }
         }
 
         // checkmate and stalemate detection.
-        if move_count == 0 {
+        if buf.is_empty() {
             if state.is_in_check(state.side_to_move) {
                 best_eval = -MATE_SCORE + (ply as i32);
             } else {
@@ -625,23 +491,8 @@ impl Searcher {
             return None;
         }
 
-        // check for checkmate/stalemate before generating moves,
-        // to avoid missing quiet mates or stalemates in quiescence search
-        {
-            let moves = &mut self.move_pool[ply];
-            moves.clear();
-            state.generate_moves(moves);
-            let move_count = moves.len();
-            if move_count == 0 {
-                if state.is_in_check(state.side_to_move) {
-                    return Some(-MATE_SCORE + (ply as i32));
-                } else {
-                    return Some(0);
-                }
-            }
-        }
-
-        // Draw detection 50-move rule and repetition.
+        // Draw detection (50-move rule and repetition) — cheap and
+        // doesn't need generated moves, so do it before movegen.
         // Quiescence is normally only captures (which reset halfmove_clock)
         // but check evasions can include quiet moves, so the check still matters.
         if state.halfmove_clock >= 100
@@ -650,18 +501,29 @@ impl Searcher {
             return Some(0);
         }
 
+        // Generate moves so we can detect checkmate/stalemate before any
+        // quiet-move filtering would hide them.
+        let mut buf = MoveScore::new();
+        state.generate_moves(buf.moves_mut());
+        if buf.is_empty() {
+            if state.is_in_check(state.side_to_move) {
+                return Some(-MATE_SCORE + (ply as i32));
+            } else {
+                return Some(0);
+            }
+        }
+
         let in_check = state.is_in_check(state.side_to_move);
 
-        let move_count = {
-            let moves = &mut self.move_pool[ply];
-            // only filter captures/promotions if not in check
-            // otherwise we might miss important evasions
-            if !in_check {
-                moves.retain(|&mv| mv.is_capture() || mv.is_promotion());
-            }
-            moves.sort_by_key(|&mv| -Searcher::score_move_quiescence(mv, None));
-            moves.len()
-        };
+        // only filter captures/promotions if not in check
+        // otherwise we might miss important evasions
+        if !in_check {
+            buf.moves_mut()
+                .retain(|&mv| mv.is_capture() || mv.is_promotion());
+        }
+
+        // Move scoring
+        buf.score_quiescence();
 
         // Stand-pat is only valid when not in check
         if !in_check {
@@ -673,9 +535,13 @@ impl Searcher {
             alpha = alpha.max(stand_pat);
         }
 
-        for i in 0..move_count {
-            let mv = self.move_pool[ply][i];
-            let eval = self.quiescence_child(state, mv, ply, alpha, beta)?;
+        for mv in buf.ordered() {
+            self.position_history.push(state.zobrist_hash);
+            let undo = state.make_move(mv);
+            let eval = self.quiescence(state, ply + 1, -beta, -alpha).map(|e| -e);
+            state.unmake_move(mv, &undo);
+            self.position_history.pop();
+            let eval = eval?;
 
             // update alpha.
             // alpha-beta on negamax, unlike minimax doesn't require updating beta.
@@ -924,5 +790,29 @@ mod tests {
         let mut searcher = Searcher::new();
         let result = searcher.search(&mut state, 1, None::<fn(SearchResult)>);
         assert_eq!(result.evaluation, 0);
+    }
+
+    /// Profiling target: a single fixed-depth search from the kiwipete
+    /// position with no time control and no reporting. `#[ignore]` keeps
+    /// it out of regular runs; invoke with
+    /// `cargo test --release profile_search_startpos_depth_10 -- --ignored --nocapture`
+    /// (or wrap with `samply` / `cargo flamegraph`).
+    #[test]
+    #[ignore]
+    fn profile_search_startpos_depth_10() {
+        let mut state = GameState::from_fen("r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1").unwrap();
+        let mut searcher = Searcher::new();
+        let start = std::time::Instant::now();
+        let result = searcher.search(&mut state, 10, None::<fn(SearchResult)>);
+        let elapsed = start.elapsed();
+        let a = result.analytics;
+        eprintln!(
+            "depth={} time={:?} nodes={} qnodes={} nps={}",
+            a.depth,
+            elapsed,
+            a.nodes_searched,
+            a.quiescence_nodes_searched,
+            a.nodes_per_second(),
+        );
     }
 }

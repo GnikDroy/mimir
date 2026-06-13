@@ -17,6 +17,8 @@ pub mod notation;
 pub mod evaluation;
 pub mod move_generator;
 pub mod move_generator_pseudo_legal;
+pub mod move_score;
+pub mod move_scorer;
 pub mod search;
 pub mod stack_vec;
 pub mod time_control;

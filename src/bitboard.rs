@@ -116,6 +116,7 @@ impl BitBoardMethods for BitBoard {
         repr
     }
 
+    #[inline(always)]
     fn flip_ranks(self) -> Self {
         // https://www.chessprogramming.org/Flipping_Mirroring_and_Rotating#Vertical
         self.swap_bytes()
@@ -133,36 +134,47 @@ impl BitBoardMethods for BitBoard {
         flipped
     }
 
+    #[inline(always)]
     fn on(square: Square) -> BitBoard {
         1 << square as u64
     }
 
+    #[inline(always)]
     fn shift_north(&self) -> BitBoard {
         (self & !Self::LAST_RANK) << File::NUM
     }
+
+    #[inline(always)]
     fn shift_south(&self) -> BitBoard {
         (self & !Self::FIRST_RANK) >> File::NUM
     }
+
+    #[inline(always)]
     fn shift_east(&self) -> BitBoard {
         (self & !Self::LAST_FILE) << 1
     }
 
+    #[inline(always)]
     fn shift_west(&self) -> BitBoard {
         (self & !Self::FIRST_FILE) >> 1
     }
 
+    #[inline(always)]
     fn shift_north_east(&self) -> BitBoard {
         (self & !Self::LAST_RANK & !Self::LAST_FILE) << (File::NUM + 1)
     }
 
+    #[inline(always)]
     fn shift_north_west(&self) -> BitBoard {
         (self & !Self::LAST_RANK & !Self::FIRST_FILE) << (File::NUM - 1)
     }
 
+    #[inline(always)]
     fn shift_south_east(&self) -> BitBoard {
         (self & !Self::FIRST_RANK & !Self::LAST_FILE) >> (File::NUM - 1)
     }
 
+    #[inline(always)]
     fn shift_south_west(&self) -> BitBoard {
         (self & !Self::FIRST_RANK & !Self::FIRST_FILE) >> (File::NUM + 1)
     }

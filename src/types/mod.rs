@@ -16,7 +16,7 @@ pub mod square;
 
 pub use color::Color;
 pub use file::File;
-pub use moves::{Move, MoveList, MoveMethods, MoveType};
+pub use moves::{Move, MoveList, MoveMethods, MoveType, MAX_MOVE_COUNT};
 pub use piece::Piece;
 pub use promotion_piece::PromotionPiece;
 pub use rank::Rank;

@@ -9,6 +9,7 @@
 //! Used by the move generator and search as `MoveList` to keep
 //! per-ply scratch buffers off the heap and reusable across plies.
 
+use std::iter::FusedIterator;
 use std::ops::{Deref, DerefMut};
 
 /// Stack-allocated vector of up to `N` elements of type `T`.
@@ -67,6 +68,34 @@ impl<T: Copy + Default, const N: usize> Iterator for StackVecIntoIter<T, N> {
             Some(item)
         }
     }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let remaining = self.vec.len - self.index;
+        (remaining, Some(remaining))
+    }
+}
+
+impl<T: Copy + Default, const N: usize> DoubleEndedIterator for StackVecIntoIter<T, N> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        if self.index >= self.vec.len {
+            None
+        } else {
+            self.vec.len -= 1;
+            Some(self.vec.data[self.vec.len])
+        }
+    }
+}
+
+impl<T: Copy + Default, const N: usize> ExactSizeIterator for StackVecIntoIter<T, N> {}
+
+impl<T: Copy + Default, const N: usize> FusedIterator for StackVecIntoIter<T, N> {}
+
+impl<T: Copy + Default, const N: usize> Extend<T> for StackVec<T, N> {
+    fn extend<I: IntoIterator<Item = T>>(&mut self, iter: I) {
+        for item in iter {
+            self.push(item);
+        }
+    }
 }
 
 impl<T: Copy + Default, const N: usize> IntoIterator for StackVec<T, N> {
@@ -82,9 +111,33 @@ impl<T: Copy + Default, const N: usize> IntoIterator for StackVec<T, N> {
 }
 
 impl<T: Copy + Default, const N: usize> StackVec<T, N> {
+    /// Empty `StackVec` whose backing storage is left uninitialized.
+    ///
+    /// The `len` starts at zero, so the uninitialized bytes are never
+    /// reachable through the `Deref<[T]>` view — `push` writes a slot
+    /// before `len` advances over it. Skipping the zero-init saves the
+    /// `N * size_of::<T>()` memset that `default()` performs, which
+    /// matters when a fresh `StackVec` is allocated on the stack at
+    /// every recursive node.
+    ///
+    /// # Safety
+    /// `T` must accept any bit pattern as valid — i.e., integer types
+    /// (`u32`, `i32`, …) or `Copy` newtypes over them. Calling this for
+    /// types with validity invariants (`bool`, `NonZero*`, references,
+    /// enums with niche fillers) is undefined behavior even if no
+    /// uninitialized slot is ever observed.
+    #[inline(always)]
+    pub unsafe fn new_uninit() -> Self {
+        Self {
+            data: std::mem::MaybeUninit::uninit().assume_init(),
+            len: 0,
+        }
+    }
+
     /// Appends `item`.
     /// Panics if the vector is already at capacity `N` in debug mode.
     /// Undefined behaviour in release mode.
+    #[inline(always)]
     pub fn push(&mut self, item: T) {
         debug_assert!(self.len < N);
         self.data[self.len] = item;
@@ -94,6 +147,7 @@ impl<T: Copy + Default, const N: usize> StackVec<T, N> {
     /// Removes and returns the last element, or [`None`] if empty. The
     /// backing slot is left untouched (still holds the old value) but
     /// becomes invisible through the slice view.
+    #[inline(always)]
     pub fn pop(&mut self) -> Option<T> {
         if self.len == 0 {
             None
@@ -104,11 +158,13 @@ impl<T: Copy + Default, const N: usize> StackVec<T, N> {
     }
 
     /// Resets length to zero in O(1). Does not drop the removed elements.
+    #[inline(always)]
     pub fn clear(&mut self) {
         self.len = 0;
     }
 
     /// Returns `true` if the vector contains no elements.
+    #[inline(always)]
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }

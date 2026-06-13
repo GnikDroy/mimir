@@ -156,17 +156,11 @@ impl GameState {
         }
 
         let mut moves = MoveList::default();
-        self.generate_moves_pseudo_legal(&mut moves);
+        self.generate_moves(&mut moves);
 
         for move_encoded in moves {
             let undo_info = self.make_move(move_encoded);
-
-            let count = if !self.is_in_check(self.side_to_move.opposite()) {
-                self.perft(depth - 1)
-            } else {
-                0
-            };
-
+            let count = self.perft(depth - 1);
             self.unmake_move(move_encoded, &undo_info);
             results.push((move_encoded, count));
         }

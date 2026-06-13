@@ -1,9 +1,11 @@
 use std::time::Duration;
 
 use crate::core::*;
-use crate::evaluation::{evaluate, MATE_SCORE};
+use crate::evaluation::evaluate;
 use crate::move_score::MoveScore;
 use crate::move_scorer::MoveScorer;
+use crate::pv_table::PvTable;
+use crate::score;
 use crate::stack_vec::StackVec;
 use crate::state::GameState;
 use crate::time_control::TimeControl;
@@ -40,20 +42,19 @@ impl SearchAnalytics {
 
 #[derive(Debug, Clone, Copy)]
 pub struct SearchResult {
-    pub best_move: Option<Move>,
     pub evaluation: i32,
     pub analytics: SearchAnalytics,
     pub pv: PvList,
 }
 
 impl SearchResult {
+    /// Head of the PV is the best move.
+    pub fn best_move(&self) -> Option<Move> {
+        self.pv.first().copied()
+    }
+
     pub fn mate_in(&self) -> Option<i32> {
-        let ply = MATE_SCORE - self.evaluation.abs();
-        if ply <= MAX_PLY as i32 {
-            Some(ply * self.evaluation.signum())
-        } else {
-            None
-        }
+        score::mate_in_plies(self.evaluation)
     }
 }
 
@@ -66,11 +67,7 @@ pub struct Searcher {
     time_control: TimeControl,
     analytics: SearchAnalytics,
     move_scorer: MoveScorer,
-    // Triangular PV table: pv_table[ply][0..pv_length[ply]] is the PV
-    // discovered at this ply. On a new best move at a node we write
-    // the move into slot 0 and copy the child's PV after it.
-    pv_table: Box<[[Move; MAX_PLY]; MAX_PLY]>,
-    pv_length: Box<[u8; MAX_PLY]>,
+    pv: PvTable<MAX_PLY>,
 }
 
 pub const MAX_PLY: usize = 64;
@@ -81,35 +78,16 @@ const QUIESCENCE_NODE_CHECK_INTERVAL: u64 = 128;
 
 impl Searcher {
     pub fn new() -> Self {
-        let pv_table = Box::new([[0u32; MAX_PLY]; MAX_PLY]);
-        let pv_length = Box::new([0u8; MAX_PLY]);
-
         let time_control = TimeControl::new(Duration::from_mins(1), Duration::from_secs(0));
 
         Searcher {
             position_history: Box::new(ZobristHashList::default()),
             move_scorer: MoveScorer::new(),
-            pv_table,
-            pv_length,
+            pv: PvTable::new(),
             transposition_table: TranspositionTable::new(),
             analytics: SearchAnalytics::default(),
             time_control,
         }
-    }
-
-    /// Append `mv` followed by the child's PV into this ply's PV slot.
-    #[inline]
-    fn update_pv(&mut self, ply: usize, mv: Move) {
-        if ply + 1 >= MAX_PLY {
-            self.pv_table[ply][0] = mv;
-            self.pv_length[ply] = 1;
-            return;
-        }
-        let child_len = self.pv_length[ply + 1] as usize;
-        let (lo, hi) = self.pv_table.split_at_mut(ply + 1);
-        lo[ply][0] = mv;
-        lo[ply][1..=child_len].copy_from_slice(&hi[0][..child_len]);
-        self.pv_length[ply] = (child_len + 1) as u8;
     }
 
     /// Snapshot the root PV into a `PvList` for reporting. After the
@@ -118,7 +96,6 @@ impl Searcher {
     /// illegal move (key collision), a repeated position, or `MAX_PLY`.
     fn root_pv(&self, state: &GameState) -> PvList {
         let mut pv = PvList::default();
-        let len = self.pv_length[0] as usize;
 
         let mut working_state = *state;
         let mut seen = ZobristHashList::default();
@@ -126,7 +103,7 @@ impl Searcher {
 
         // Copy the in-search PV into the output and advance working_state
         // to its leaf so the TT-replay loop below picks up from there.
-        for &mv in &self.pv_table[0][..len] {
+        for &mv in self.pv.root() {
             pv.push(mv);
             working_state.make_move(mv);
             if seen.len() < MAX_PLY {
@@ -209,32 +186,6 @@ impl Searcher {
             .update_clock(wtime, btime, winc, binc, movestogo, move_time);
     }
 
-    #[inline(always)]
-    fn score_to_tt(score: i32, ply: usize) -> i32 {
-        let ply = ply as i32;
-
-        if score > MATE_SCORE - MAX_PLY as i32 {
-            score + ply
-        } else if score < -MATE_SCORE + MAX_PLY as i32 {
-            score - ply
-        } else {
-            score
-        }
-    }
-
-    #[inline(always)]
-    fn score_from_tt(score: i32, ply: usize) -> i32 {
-        let ply = ply as i32;
-
-        if score > MATE_SCORE - MAX_PLY as i32 {
-            score - ply
-        } else if score < -MATE_SCORE + MAX_PLY as i32 {
-            score + ply
-        } else {
-            score
-        }
-    }
-
     /// Iterative deepening search: tries depths 1, 2, 3, ... until time/depth limit
     /// Returns the best move and evaluation found at the deepest completed depth
     pub fn search(
@@ -249,23 +200,19 @@ impl Searcher {
         // Clear killer moves
         self.move_scorer.clear_killers();
 
-        // Clear PV table lengths. The data array doesn't need clearing —
-        // pv_length controls which slots are read.
-        self.pv_length.fill(0);
+        self.pv.clear();
 
         // Reset position history: repetition detection only considers
         // positions visited within this search tree.
         self.position_history.clear();
 
-        let mut best_move = None;
         let mut best_eval = 0i32;
         let mut pv = PvList::default();
 
         self.time_control.set_search_deadline(state.side_to_move);
         for depth in 1..=max_depth {
             match self.alpha_beta(state, depth, 0, i32::MIN / 2, i32::MAX / 2) {
-                Some((mv, eval)) => {
-                    best_move = mv;
+                Some((_, eval)) => {
                     best_eval = eval;
                     pv = self.root_pv(state);
                     self.analytics.depth = depth;
@@ -280,7 +227,6 @@ impl Searcher {
             self.analytics.transposition_table_hashfull = self.transposition_table.hashfull();
             if let Some(f) = report_fn.as_ref() {
                 f(SearchResult {
-                    best_move,
                     evaluation: best_eval,
                     analytics: self.analytics,
                     pv,
@@ -295,7 +241,6 @@ impl Searcher {
 
         self.time_control.clear_search_deadline();
         SearchResult {
-            best_move,
             evaluation: best_eval,
             analytics: self.analytics,
             pv,
@@ -312,7 +257,7 @@ impl Searcher {
     ) -> Option<(Option<Move>, i32)> {
         // Reset this ply's PV. Early returns (draw, depth==0, TT cutoff) will
         // leave it empty; the parent then sees an empty child PV and truncates.
-        self.pv_length[ply] = 0;
+        self.pv.clear_ply(ply);
 
         // Draw detection: 50-move rule and repetition.
         // Only at ply > 0 so the root still produces a best move
@@ -349,7 +294,7 @@ impl Searcher {
         // and use it to potentially cut off the search early
         let tt_entry = self.transposition_table.probe(state.zobrist_hash);
         if let Some(entry) = tt_entry.filter(|entry| entry.depth >= depth) {
-            let tt_score = Self::score_from_tt(entry.score, ply);
+            let tt_score = score::decode_tt_score(entry.score, ply);
 
             match entry.flag {
                 TranspositionFlag::Exact => return Some((entry.best_move, tt_score)),
@@ -416,7 +361,7 @@ impl Searcher {
             if eval > best_eval {
                 best_eval = eval;
                 best_move = Some(mv);
-                self.update_pv(ply, mv);
+                self.pv.update(ply, mv);
             }
 
             // update alpha.
@@ -443,7 +388,7 @@ impl Searcher {
         // checkmate and stalemate detection.
         if buf.is_empty() {
             if state.is_in_check(state.side_to_move) {
-                best_eval = -MATE_SCORE + (ply as i32);
+                best_eval = -score::MATE_SCORE + (ply as i32);
             } else {
                 best_eval = 0;
             }
@@ -461,7 +406,7 @@ impl Searcher {
         self.transposition_table.store(TranspositionEntry {
             key: state.zobrist_hash,
             depth,
-            score: Self::score_to_tt(best_eval, ply),
+            score: score::encode_tt_score(best_eval, ply),
             flag,
             best_move,
         });
@@ -507,7 +452,7 @@ impl Searcher {
         state.generate_moves(buf.moves_mut());
         if buf.is_empty() {
             if state.is_in_check(state.side_to_move) {
-                return Some(-MATE_SCORE + (ply as i32));
+                return Some(-score::MATE_SCORE + (ply as i32));
             } else {
                 return Some(0);
             }
@@ -590,7 +535,7 @@ mod tests {
             println!(
                 "Best Move: {}, Eval: {}, Nodes: {}, Max Depth: {}, Max QDepth: {}, Time: {:?}",
                 result
-                    .best_move
+                    .best_move()
                     .map_or("None".to_string(), |mv| mv.to_uci()),
                 result.evaluation,
                 result.analytics.total_nodes(),
@@ -598,7 +543,7 @@ mod tests {
                 result.analytics.max_quiescence_depth_reached,
                 elapsed
             );
-            if let Some(best_move) = result.best_move {
+            if let Some(best_move) = result.best_move() {
                 history.push(best_move);
                 state.make_move(best_move);
             } else {
@@ -641,7 +586,7 @@ mod tests {
         let pv: Vec<String> = result.pv.iter().map(|m| m.to_uci()).collect();
         assert_eq!(pv, vec!["b4f8", "g8f8", "e2e8"]);
         assert_eq!(
-            result.best_move.map(|m| m.to_uci()),
+            result.best_move().map(|m| m.to_uci()),
             Some("b4f8".to_string())
         );
     }
@@ -776,7 +721,7 @@ mod tests {
         let result = searcher.search(&mut state, 7, None::<fn(SearchResult)>);
         assert_eq!(result.evaluation, 0);
         assert_eq!(
-            result.best_move.map(|m| m.to_uci()),
+            result.best_move().map(|m| m.to_uci()),
             Some("f2a7".to_string())
         );
     }

@@ -213,11 +213,6 @@ const ENDGAME_MATERIAL_VALUES: [i32; Piece::NUM] = [0, 936, 512, 297, 281, 94];
 /// Phase value at the starting position (`2*Q*4 + 4*R*2 + 4*N*1 + 4*B*1`).
 const PHASE_LIMIT: i32 = 24;
 
-/// Score used for forced mate. Larger than any reasonable material score
-/// but kept comfortably below [`i32::MAX`] so distance-to-mate offsets
-/// can be applied without overflow.
-pub const MATE_SCORE: i32 = i32::MAX / 2;
-
 /// Static evaluation of `state` from the side-to-move's perspective.
 ///
 /// Walks every piece on the board exactly once to accumulate four

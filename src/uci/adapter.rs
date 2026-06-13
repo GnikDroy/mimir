@@ -119,10 +119,6 @@ impl UCIAdapter {
             for mv in &*info.pv {
                 write!(writer, " {}", mv.to_uci())?;
             }
-        } else if let Some(best_move) = info.best_move {
-            // Fall back to the root best move when no PV is available
-            // (e.g. early termination before any iteration completed).
-            write!(writer, " pv {}", best_move.to_uci())?;
         }
 
         writeln!(writer)?;
@@ -318,7 +314,7 @@ impl UCIAdapter {
             );
 
             if generation_token.load(Ordering::SeqCst) == generation {
-                let msg = match result.best_move {
+                let msg = match result.best_move() {
                     Some(best_move) => format!("bestmove {}", best_move.to_uci()),
                     None => "bestmove 0000".to_string(),
                 };
@@ -631,11 +627,12 @@ mod tests {
 
         let mv: Move = Move::from_quiet(Square::E2, Square::E4, Piece::Pawn);
 
+        let mut pv = crate::search::PvList::default();
+        pv.push(mv);
         let info = SearchResult {
-            best_move: Some(mv),
             evaluation: 42,
             analytics: crate::search::SearchAnalytics::default(),
-            pv: crate::search::PvList::default(),
+            pv,
         };
 
         let result = UCIAdapter::handle_info(info, &mut output);

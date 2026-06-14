@@ -98,6 +98,32 @@ impl MoveScorer {
         self.killer_moves.fill([0u32; KILLER_MOVES_PER_PLY]);
     }
 
+    /// `true` when `mv` is a registered killer move at `ply`.
+    #[inline]
+    pub fn is_killer(&self, mv: Move, ply: usize) -> bool {
+        self.killer_moves[ply].contains(&mv)
+    }
+
+    /// Returns the quiet move (non-capture, non-promotion) with the highest
+    /// raw history score for `side`, or `None` if no such move has nonzero
+    /// history. Used to gauge the quality of the history heuristic — a node
+    /// where every quiet move has zero history isn't a meaningful sample.
+    pub fn find_history_top(&self, side: Color, moves: &MoveList) -> Option<Move> {
+        let mut best: Option<Move> = None;
+        let mut best_val: u32 = 0;
+        for &mv in moves.iter() {
+            if mv.is_capture() || mv.is_promotion() {
+                continue;
+            }
+            let v = self.history[side as usize][mv.get_from() as usize][mv.get_to() as usize];
+            if v > best_val {
+                best_val = v;
+                best = Some(mv);
+            }
+        }
+        best
+    }
+
     /// Insert `mv` as the primary killer at `ply`, shifting older entries
     /// down. If `mv` already occupies a slot, entries before it shift down
     /// to that slot (no duplicates); otherwise the oldest entry is evicted.

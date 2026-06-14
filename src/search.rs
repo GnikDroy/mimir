@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use crate::analytics::SearchAnalytics;
 use crate::core::*;
 use crate::evaluation::evaluate;
 use crate::move_score::MoveScore;
@@ -11,34 +12,6 @@ use crate::state::GameState;
 use crate::time_control::TimeControl;
 use crate::transposition_table::{TranspositionEntry, TranspositionFlag, TranspositionTable};
 use crate::zobrist::ZobristHash;
-
-#[derive(Debug, Clone, Copy, Default)]
-pub struct SearchAnalytics {
-    pub depth: u8,
-    pub elapsed: Duration,
-    pub nodes_searched: u64,
-    pub quiescence_nodes_searched: u64,
-    pub max_quiescence_depth_reached: u8,
-    pub alpha_beta_cutoffs: u64,
-    pub quiescence_alpha_beta_cutoffs: u64,
-    pub transposition_table_hits: u64,
-    pub transposition_table_cuts: u64,
-    pub transposition_table_hashfull: u32,
-    pub pvs_re_searches: u64,
-}
-
-impl SearchAnalytics {
-    pub fn total_nodes(&self) -> u64 {
-        self.nodes_searched + self.quiescence_nodes_searched
-    }
-
-    pub fn nodes_per_second(&self) -> u64 {
-        if self.elapsed.as_secs_f64() == 0.0 {
-            return 0;
-        }
-        (self.total_nodes() as f64 / self.elapsed.as_secs_f64()).round() as u64
-    }
-}
 
 #[derive(Debug, Clone, Copy)]
 pub struct SearchResult {
@@ -259,6 +232,8 @@ impl Searcher {
         // leave it empty; the parent then sees an empty child PV and truncates.
         self.pv.clear_ply(ply);
 
+        self.analytics.max_ply_reached = self.analytics.max_ply_reached.max(ply as u8);
+
         // Draw detection: 50-move rule and repetition.
         // Only at ply > 0 so the root still produces a best move
         if ply > 0
@@ -293,18 +268,24 @@ impl Searcher {
         // Check if transposition table has a valid entry for this position and depth,
         // and use it to potentially cut off the search early
         let tt_entry = self.transposition_table.probe(state.zobrist_hash);
+        if tt_entry.is_some() {
+            self.analytics.transposition_table_entries_found += 1;
+        }
         if let Some(entry) = tt_entry.filter(|entry| entry.depth >= depth) {
             let tt_score = score::decode_tt_score(entry.score, ply);
 
+            self.analytics.transposition_table_hits += 1;
+
             match entry.flag {
-                TranspositionFlag::Exact => return Some((entry.best_move, tt_score)),
+                TranspositionFlag::Exact => {
+                    self.analytics.transposition_table_cuts += 1;
+                    return Some((entry.best_move, tt_score));
+                }
                 TranspositionFlag::LowerBound => alpha = alpha.max(tt_score),
                 TranspositionFlag::UpperBound => beta = beta.min(tt_score),
             }
 
-            self.analytics.transposition_table_hits += 1;
-
-            // If the tt entry causes a cutoff, we can skip searching this node entirely.
+            // If the bound update causes a cutoff, skip searching this node.
             if alpha >= beta {
                 self.analytics.transposition_table_cuts += 1;
                 return Some((entry.best_move, tt_score));
@@ -317,9 +298,28 @@ impl Searcher {
         state.generate_moves(buf.moves_mut());
         buf.score_main(&self.move_scorer, state, tt_move, ply);
 
+        // Snapshot the move-ordering signal that depends on the buffer's
+        // contents but not its order — pull it before `ordered()` borrows
+        // `buf` mutably.
+        let history_top = self
+            .move_scorer
+            .find_history_top(state.side_to_move, &buf);
+        let mut history_top_tried = false;
+
         let mut best_move = None;
         let mut best_eval = i32::MIN / 2;
         for (i, mv) in buf.ordered().enumerate() {
+            // Track which ordering signal this move corresponds to.
+            if Some(mv) == tt_move {
+                self.analytics.tt_move_tried += 1;
+            }
+            if self.move_scorer.is_killer(mv, ply) {
+                self.analytics.killer_move_tried += 1;
+            }
+            if Some(mv) == history_top {
+                history_top_tried = true;
+            }
+
             // Principal Variation Search: full window on the first move, null-window
             // probe on the rest, re-search only when a probe falls inside (alpha, beta).
             let eval = if i == 0 {
@@ -332,6 +332,12 @@ impl Searcher {
                 self.position_history.pop();
                 eval?
             } else {
+                self.analytics.pvs_scouts += 1;
+                // A scout taken when beta == alpha + 1 cannot ever
+                // re-search (the math forbids it)
+                if beta > alpha + 1 {
+                    self.analytics.pvs_open_window_scouts += 1;
+                }
                 self.position_history.push(state.zobrist_hash);
                 let undo = state.make_move(mv);
                 let scout = self
@@ -341,6 +347,7 @@ impl Searcher {
                 self.position_history.pop();
                 let scout = scout?;
 
+                // Research since probe failed
                 if scout > alpha && scout < beta {
                     self.analytics.pvs_re_searches += 1;
                     self.position_history.push(state.zobrist_hash);
@@ -371,6 +378,12 @@ impl Searcher {
             // This is the core alpha-beta cutoff.
             if alpha >= beta {
                 self.analytics.alpha_beta_cutoffs += 1;
+                if Some(mv) == tt_move {
+                    self.analytics.tt_move_cutoffs += 1;
+                }
+                if self.move_scorer.is_killer(mv, ply) {
+                    self.analytics.killer_move_cutoffs += 1;
+                }
                 if !mv.is_capture() && !mv.is_promotion() {
                     // Store killer moves (per ply) if it's a quiet move
                     // that cause a cutoff at this depth.
@@ -382,6 +395,18 @@ impl Searcher {
                         .update_history(mv, depth, state.side_to_move);
                 }
                 break;
+            }
+        }
+
+        // Resolve history-top stats once the move loop ends. Only count
+        // the node if a top-history move existed (i.e. at least one quiet
+        // move had nonzero history); otherwise the sample is meaningless.
+        if history_top.is_some() {
+            if history_top_tried {
+                self.analytics.history_top_tried += 1;
+            }
+            if best_move == history_top {
+                self.analytics.history_top_best += 1;
             }
         }
 
@@ -422,8 +447,7 @@ impl Searcher {
         mut alpha: i32,
         beta: i32,
     ) -> Option<i32> {
-        self.analytics.max_quiescence_depth_reached =
-            self.analytics.max_quiescence_depth_reached.max(ply as u8);
+        self.analytics.max_ply_reached = self.analytics.max_ply_reached.max(ply as u8);
         self.analytics.quiescence_nodes_searched += 1;
 
         // Timeout check
@@ -460,25 +484,24 @@ impl Searcher {
 
         let in_check = state.is_in_check(state.side_to_move);
 
-        // only filter captures/promotions if not in check
-        // otherwise we might miss important evasions
+        // Outside of check, only keep captures and promotions
+        // (hen in check, keep everything
         if !in_check {
-            buf.moves_mut()
-                .retain(|&mv| mv.is_capture() || mv.is_promotion());
+            buf.moves_mut().retain(|&mv| { mv.is_capture() || mv.is_promotion() });
         }
-
-        // Move scoring
-        buf.score_quiescence();
 
         // Stand-pat is only valid when not in check
         if !in_check {
             let stand_pat = evaluate(state);
             if stand_pat >= beta {
-                self.analytics.quiescence_alpha_beta_cutoffs += 1;
+                self.analytics.quiescence_stand_pat_cutoffs += 1;
                 return Some(beta);
             }
             alpha = alpha.max(stand_pat);
         }
+
+        // Move scoring
+        buf.score_quiescence();
 
         for mv in buf.ordered() {
             self.position_history.push(state.zobrist_hash);
@@ -533,14 +556,14 @@ mod tests {
             let result = searcher.search(state, search_depth, None::<fn(SearchResult)>);
             let elapsed = initial_time.elapsed();
             println!(
-                "Best Move: {}, Eval: {}, Nodes: {}, Max Depth: {}, Max QDepth: {}, Time: {:?}",
+                "Best Move: {}, Eval: {}, Nodes: {}, Max Depth: {}, Deepest Ply: {}, Time: {:?}",
                 result
                     .best_move()
                     .map_or("None".to_string(), |mv| mv.to_uci()),
                 result.evaluation,
                 result.analytics.total_nodes(),
                 result.analytics.depth,
-                result.analytics.max_quiescence_depth_reached,
+                result.analytics.max_ply_reached,
                 elapsed
             );
             if let Some(best_move) = result.best_move() {
@@ -737,27 +760,4 @@ mod tests {
         assert_eq!(result.evaluation, 0);
     }
 
-    /// Profiling target: a single fixed-depth search from the kiwipete
-    /// position with no time control and no reporting. `#[ignore]` keeps
-    /// it out of regular runs; invoke with
-    /// `cargo test --release profile_search_startpos_depth_10 -- --ignored --nocapture`
-    /// (or wrap with `samply` / `cargo flamegraph`).
-    #[test]
-    #[ignore]
-    fn profile_search_startpos_depth_10() {
-        let mut state = GameState::from_fen("r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1").unwrap();
-        let mut searcher = Searcher::new();
-        let start = std::time::Instant::now();
-        let result = searcher.search(&mut state, 10, None::<fn(SearchResult)>);
-        let elapsed = start.elapsed();
-        let a = result.analytics;
-        eprintln!(
-            "depth={} time={:?} nodes={} qnodes={} nps={}",
-            a.depth,
-            elapsed,
-            a.nodes_searched,
-            a.quiescence_nodes_searched,
-            a.nodes_per_second(),
-        );
-    }
 }

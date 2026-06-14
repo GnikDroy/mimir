@@ -89,10 +89,7 @@ impl UCIAdapter {
         let nodes = info.analytics.total_nodes();
         let nps = info.analytics.nodes_per_second();
         let time = info.analytics.elapsed.as_millis();
-        let seldepth = info
-            .analytics
-            .max_quiescence_depth_reached
-            .max(info.analytics.depth);
+        let seldepth = info.analytics.max_ply_reached.max(info.analytics.depth);
 
         write!(
             writer,
@@ -631,7 +628,7 @@ mod tests {
         pv.push(mv);
         let info = SearchResult {
             evaluation: 42,
-            analytics: crate::search::SearchAnalytics::default(),
+            analytics: crate::analytics::SearchAnalytics::default(),
             pv,
         };
 

@@ -9,6 +9,7 @@ mod attack_table;
 
 pub mod types;
 
+pub mod analytics;
 pub mod core;
 pub mod state;
 

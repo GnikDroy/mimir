@@ -29,11 +29,9 @@ impl MoveScore {
     /// Empty buffer
     #[inline(always)]
     pub fn new() -> Self {
-        unsafe {
-            Self {
-                moves: MoveList::new_uninit(),
-                scores: ScoreList::new_uninit(),
-            }
+        Self {
+            moves: MoveList::default(),
+            scores: ScoreList::default(),
         }
     }
 

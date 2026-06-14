@@ -12,6 +12,19 @@ use crate::search::MAX_PLY;
 /// kept below `i32::MAX` so distance-to-mate offsets don't overflow.
 pub const MATE_SCORE: i32 = i32::MAX / 2;
 
+/// Score for delivering mate `ply` plies from the root.
+#[inline(always)]
+#[allow(dead_code)]
+pub fn mate(ply: usize) -> i32 {
+    MATE_SCORE - ply as i32
+}
+
+/// Score for being mated `ply` plies from the root.
+#[inline(always)]
+pub fn mated(ply: usize) -> i32 {
+    -MATE_SCORE + ply as i32
+}
+
 /// Convert a search score (mate distance from the root) into the
 /// ply-relative form stored in the TT. Non-mate scores pass through.
 #[inline(always)]

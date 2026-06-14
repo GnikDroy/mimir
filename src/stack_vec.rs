@@ -1,49 +1,65 @@
 //! Fixed-capacity stack-allocated vector.
 //!
-//! [`StackVec`] is a `Vec`-shaped container backed by an inline `[T; N]`
-//! array. There is no heap allocation and no growth: pushing past `N`
-//! panics. The element type must be `Copy + Default` so the backing
-//! array can be initialized eagerly and `pop`/`retain` can shuffle
-//! entries without `mem::replace`.
+//! [`StackVec`] is a `Vec`-shaped container backed by an inline
+//! `[MaybeUninit<T>; N]` array. There is no heap allocation and no
+//! growth: pushing past `N` panics in debug, undefined behavior in
+//! release. Slots past `len` are uninitialized and never observed
+//! through the `Deref<[T]>` view — construction skips the
+//! `N * size_of::<T>()` memset that an eager `[T::default(); N]` would
+//! perform, which matters when a fresh `StackVec` is allocated on the
+//! stack at every recursive node.
 //!
 //! Used by the move generator and search as `MoveList` to keep
 //! per-ply scratch buffers off the heap and reusable across plies.
 
+use std::fmt;
 use std::iter::FusedIterator;
+use std::mem::MaybeUninit;
 use std::ops::{Deref, DerefMut};
 
 /// Stack-allocated vector of up to `N` elements of type `T`.
 ///
 /// Implements [`Deref`]`<Target = [T]>`, so all slice methods
 /// (`iter`, indexing, `split_first`, …) are available directly.
-/// Elements past `len` are still valid `T::default()` instances in the
-/// underlying array but are not visible through the slice view.
-#[derive(Debug, Clone, Copy)]
-pub struct StackVec<T: Copy + Default, const N: usize> {
-    data: [T; N],
+#[derive(Clone, Copy)]
+pub struct StackVec<T: Copy, const N: usize> {
+    data: [MaybeUninit<T>; N],
     len: usize,
 }
 
-impl<T: Copy + Default, const N: usize> Default for StackVec<T, N> {
+impl<T: Copy, const N: usize> Default for StackVec<T, N> {
+    #[inline(always)]
     fn default() -> Self {
         StackVec {
-            data: [T::default(); N],
+            data: [MaybeUninit::uninit(); N],
             len: 0,
         }
     }
 }
 
-impl<T: Copy + Default, const N: usize> Deref for StackVec<T, N> {
+impl<T: Copy, const N: usize> Deref for StackVec<T, N> {
     type Target = [T];
 
+    #[inline(always)]
     fn deref(&self) -> &Self::Target {
-        &self.data[..self.len]
+        // SAFETY: data[..len] is fully initialized — push writes a slot
+        // before len advances over it, and len never grows without a
+        // matching write. MaybeUninit<T> has the same layout as T.
+        unsafe { std::slice::from_raw_parts(self.data.as_ptr() as *const T, self.len) }
     }
 }
 
-impl<T: Copy + Default, const N: usize> DerefMut for StackVec<T, N> {
+impl<T: Copy, const N: usize> DerefMut for StackVec<T, N> {
+    #[inline(always)]
     fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.data[..self.len]
+        // SAFETY: see Deref::deref.
+        unsafe { std::slice::from_raw_parts_mut(self.data.as_mut_ptr() as *mut T, self.len) }
+    }
+}
+
+impl<T: Copy + fmt::Debug, const N: usize> fmt::Debug for StackVec<T, N> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_list().entries(self.iter()).finish()
     }
 }
 
@@ -51,19 +67,20 @@ impl<T: Copy + Default, const N: usize> DerefMut for StackVec<T, N> {
 ///
 /// Holds the original vector by value and walks it front-to-back.
 /// Yields exactly `vec.len` items.
-pub struct StackVecIntoIter<T: Copy + Default, const N: usize> {
+pub struct StackVecIntoIter<T: Copy, const N: usize> {
     vec: StackVec<T, N>,
     index: usize,
 }
 
-impl<T: Copy + Default, const N: usize> Iterator for StackVecIntoIter<T, N> {
+impl<T: Copy, const N: usize> Iterator for StackVecIntoIter<T, N> {
     type Item = T;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.index >= self.vec.len {
             None
         } else {
-            let item = self.vec.data[self.index];
+            // SAFETY: index < len, so data[index] was initialized by push.
+            let item = unsafe { self.vec.data[self.index].assume_init() };
             self.index += 1;
             Some(item)
         }
@@ -75,22 +92,23 @@ impl<T: Copy + Default, const N: usize> Iterator for StackVecIntoIter<T, N> {
     }
 }
 
-impl<T: Copy + Default, const N: usize> DoubleEndedIterator for StackVecIntoIter<T, N> {
+impl<T: Copy, const N: usize> DoubleEndedIterator for StackVecIntoIter<T, N> {
     fn next_back(&mut self) -> Option<Self::Item> {
         if self.index >= self.vec.len {
             None
         } else {
             self.vec.len -= 1;
-            Some(self.vec.data[self.vec.len])
+            // SAFETY: index < old len, so data[len-1] was initialized.
+            Some(unsafe { self.vec.data[self.vec.len].assume_init() })
         }
     }
 }
 
-impl<T: Copy + Default, const N: usize> ExactSizeIterator for StackVecIntoIter<T, N> {}
+impl<T: Copy, const N: usize> ExactSizeIterator for StackVecIntoIter<T, N> {}
 
-impl<T: Copy + Default, const N: usize> FusedIterator for StackVecIntoIter<T, N> {}
+impl<T: Copy, const N: usize> FusedIterator for StackVecIntoIter<T, N> {}
 
-impl<T: Copy + Default, const N: usize> Extend<T> for StackVec<T, N> {
+impl<T: Copy, const N: usize> Extend<T> for StackVec<T, N> {
     fn extend<I: IntoIterator<Item = T>>(&mut self, iter: I) {
         for item in iter {
             self.push(item);
@@ -98,7 +116,7 @@ impl<T: Copy + Default, const N: usize> Extend<T> for StackVec<T, N> {
     }
 }
 
-impl<T: Copy + Default, const N: usize> IntoIterator for StackVec<T, N> {
+impl<T: Copy, const N: usize> IntoIterator for StackVec<T, N> {
     type Item = T;
     type IntoIter = StackVecIntoIter<T, N>;
 
@@ -110,37 +128,14 @@ impl<T: Copy + Default, const N: usize> IntoIterator for StackVec<T, N> {
     }
 }
 
-impl<T: Copy + Default, const N: usize> StackVec<T, N> {
-    /// Empty `StackVec` whose backing storage is left uninitialized.
-    ///
-    /// The `len` starts at zero, so the uninitialized bytes are never
-    /// reachable through the `Deref<[T]>` view — `push` writes a slot
-    /// before `len` advances over it. Skipping the zero-init saves the
-    /// `N * size_of::<T>()` memset that `default()` performs, which
-    /// matters when a fresh `StackVec` is allocated on the stack at
-    /// every recursive node.
-    ///
-    /// # Safety
-    /// `T` must accept any bit pattern as valid — i.e., integer types
-    /// (`u32`, `i32`, …) or `Copy` newtypes over them. Calling this for
-    /// types with validity invariants (`bool`, `NonZero*`, references,
-    /// enums with niche fillers) is undefined behavior even if no
-    /// uninitialized slot is ever observed.
-    #[inline(always)]
-    pub unsafe fn new_uninit() -> Self {
-        Self {
-            data: std::mem::MaybeUninit::uninit().assume_init(),
-            len: 0,
-        }
-    }
-
+impl<T: Copy, const N: usize> StackVec<T, N> {
     /// Appends `item`.
     /// Panics if the vector is already at capacity `N` in debug mode.
     /// Undefined behaviour in release mode.
     #[inline(always)]
     pub fn push(&mut self, item: T) {
         debug_assert!(self.len < N);
-        self.data[self.len] = item;
+        self.data[self.len].write(item);
         self.len += 1;
     }
 
@@ -153,7 +148,8 @@ impl<T: Copy + Default, const N: usize> StackVec<T, N> {
             None
         } else {
             self.len -= 1;
-            Some(self.data[self.len])
+            // SAFETY: len was > 0, so data[len] was initialized by push.
+            Some(unsafe { self.data[self.len].assume_init() })
         }
     }
 
@@ -179,9 +175,11 @@ impl<T: Copy + Default, const N: usize> StackVec<T, N> {
         let mut write = 0;
 
         for read in 0..self.len {
-            if f(&self.data[read]) {
+            // SAFETY: read < self.len, so data[read] is initialized.
+            let item = unsafe { self.data[read].assume_init() };
+            if f(&item) {
                 if write != read {
-                    self.data[write] = self.data[read];
+                    self.data[write].write(item);
                 }
                 write += 1;
             }

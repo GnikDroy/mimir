@@ -413,7 +413,7 @@ impl Searcher {
         // checkmate and stalemate detection.
         if buf.is_empty() {
             if state.is_in_check(state.side_to_move) {
-                best_eval = -score::MATE_SCORE + (ply as i32);
+                best_eval = score::mated(ply);
             } else {
                 best_eval = 0;
             }
@@ -476,7 +476,7 @@ impl Searcher {
         state.generate_moves(buf.moves_mut());
         if buf.is_empty() {
             if state.is_in_check(state.side_to_move) {
-                return Some(-score::MATE_SCORE + (ply as i32));
+                return Some(score::mated(ply));
             } else {
                 return Some(0);
             }

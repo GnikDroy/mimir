@@ -48,6 +48,15 @@ pub struct SearchAnalytics {
     /// Subset of `null_move_attempts` where the reduced null-window search
     /// failed high and we cut.
     pub null_move_cutoffs: u64,
+    /// Times late move reductions were applied (passed all guards and the
+    /// table returned a nonzero reduction).
+    pub lmr_attempts: u64,
+    /// Subset of `lmr_attempts` where the reduced search confirmed the move
+    /// wasn't better than alpha — the reduction held, no re-search needed.
+    pub lmr_successes: u64,
+    /// Subset of `lmr_attempts` where the reduced scout failed high and we
+    /// re-searched at full depth.
+    pub lmr_re_searches_depth: u64,
     /// Times the TT-suggested move was reached in the move loop.
     pub tt_move_tried: u64,
     /// Times the TT-suggested move caused the beta cutoff.
@@ -273,6 +282,32 @@ impl fmt::Display for SearchAnalytics {
             "Null move cutoffs:",
             with_commas(self.null_move_cutoffs),
             pct(self.null_move_cutoffs, self.null_move_attempts),
+            w = LABEL_WIDTH,
+        )?;
+        writeln!(f)?;
+
+        // Late move reductions
+        writeln!(
+            f,
+            "{:<w$}{}",
+            "LMR attempts:",
+            with_commas(self.lmr_attempts),
+            w = LABEL_WIDTH,
+        )?;
+        writeln!(
+            f,
+            "{:<w$}{} ({:.1}% of attempts)",
+            "LMR successes (reduction held):",
+            with_commas(self.lmr_successes),
+            pct(self.lmr_successes, self.lmr_attempts),
+            w = LABEL_WIDTH,
+        )?;
+        writeln!(
+            f,
+            "{:<w$}{} ({:.1}% of attempts)",
+            "LMR full-depth re-searches:",
+            with_commas(self.lmr_re_searches_depth),
+            pct(self.lmr_re_searches_depth, self.lmr_attempts),
             w = LABEL_WIDTH,
         )?;
         writeln!(f)?;

@@ -16,6 +16,7 @@ pub mod state;
 pub mod notation;
 
 pub mod evaluation;
+pub mod late_move_reduction_table;
 pub mod move_generator;
 pub mod move_generator_pseudo_legal;
 pub mod move_score;

@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use crate::analytics::SearchAnalytics;
 use crate::core::*;
+use crate::late_move_reduction_table::reduction;
 use crate::move_score::MoveScore;
 use crate::move_scorer::MoveScorer;
 use crate::nnue::evaluate;
@@ -395,29 +396,67 @@ impl Searcher {
                 if beta > alpha + 1 {
                     self.analytics.pvs_open_window_scouts += 1;
                 }
+
+                // Late Move Reductions: search late quiet moves at reduced
+                // depth. The reduced scout's job is to cheaply confirm the
+                // move isn't better than alpha; if it fails high, we
+                // re-search at full depth to verify.
+                const LMR_MIN_DEPTH: u8 = 3;
+                const LMR_MIN_MOVES: usize = 3;
+                let can_reduce = depth >= LMR_MIN_DEPTH
+                    && i >= LMR_MIN_MOVES
+                    && !in_check
+                    && !mv.is_capture()
+                    && !mv.is_promotion()
+                    && !self.move_scorer.is_killer(mv, ply);
+                let r = if can_reduce { reduction(depth, i) } else { 0 };
+                let reduced_depth = (depth - 1).saturating_sub(r);
+                if r > 0 {
+                    self.analytics.lmr_attempts += 1;
+                }
+
+                // Stage 1: null-window scout (reduced depth if LMR fired).
                 self.position_history.push(state.zobrist_hash);
                 let undo = state.make_move(mv);
                 let scout = self
-                    .alpha_beta(state, depth - 1, ply + 1, -alpha - 1, -alpha, true)
+                    .alpha_beta(state, reduced_depth, ply + 1, -alpha - 1, -alpha, true)
                     .map(|(_, e)| -e);
                 state.unmake_move(mv, &undo);
                 self.position_history.pop();
-                let scout = scout?;
+                let mut score = scout?;
 
-                // Research since probe failed
-                if scout > alpha && scout < beta {
+                // Stage 2: if LMR was applied and the reduced scout failed
+                // high, verify at full depth (still null window). Reduced
+                // searches can't be trusted for cutoffs without this re-check.
+                if r > 0 && score > alpha {
+                    self.analytics.lmr_re_searches_depth += 1;
+                    self.position_history.push(state.zobrist_hash);
+                    let undo = state.make_move(mv);
+                    let s = self
+                        .alpha_beta(state, depth - 1, ply + 1, -alpha - 1, -alpha, true)
+                        .map(|(_, e)| -e);
+                    state.unmake_move(mv, &undo);
+                    self.position_history.pop();
+                    score = s?;
+                } else if r > 0 {
+                    self.analytics.lmr_successes += 1;
+                }
+
+                // Stage 3: PVS open-window re-search when the score lands
+                // inside (alpha, beta) — only possible at PV nodes.
+                if score > alpha && score < beta {
                     self.analytics.pvs_re_searches += 1;
                     self.position_history.push(state.zobrist_hash);
                     let undo = state.make_move(mv);
-                    let eval = self
+                    let s = self
                         .alpha_beta(state, depth - 1, ply + 1, -beta, -alpha, true)
                         .map(|(_, e)| -e);
                     state.unmake_move(mv, &undo);
                     self.position_history.pop();
-                    eval?
-                } else {
-                    scout
+                    score = s?;
                 }
+
+                score
             };
 
             // min(-eval, -best_eval) = max(eval, best_eval)

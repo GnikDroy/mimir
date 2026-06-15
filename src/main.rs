@@ -1,3 +1,3 @@
 fn main() {
-    chess_engine::uci::run();
+    mimir::uci::run();
 }

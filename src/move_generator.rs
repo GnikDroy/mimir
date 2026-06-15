@@ -1,25 +1,29 @@
 //! Single-pass strict-legal move generation.
 //!
 //! Builds a per-position legality context (pins, king-danger, check-mask) and
-//! AND-s each piece's pseudo-legal targets against it. The only fallback
-//! to make/unmake is en passant, to catch the horizontal-pin edge case.
+//! AND-s each piece's pseudo-legal targets against it.
 
 use crate::attack_table::ATTACK_TABLE;
 use crate::bitboard::{BitBoard, BitBoardMethods};
 use crate::core::*;
 use crate::state::GameState;
 
-/// Per-position legality context used to filter pseudo-legal moves in one pass.
-struct LegalCtx {
-    king_sq: Square,
-    num_checkers: u32,
+/// Per-position legality context.
+/// Mainly used to generate legal moves.
+pub struct LegalCtx {
+    // The square the side-to-move king is on.
+    pub king_sq: Square,
+    // Checkers for the side-to-move king.
+    pub checkers: BitBoard,
+    // popcnt of checkers
+    pub num_checkers: u32,
     /// Friendly pieces pinned to their `get_line(king_sq, from)` ray.
-    pinned: BitBoard,
-    /// Enemy attacks with the king removed from occupancy — squares the
-    /// king may not move to.
-    king_danger: BitBoard,
+    pub pinned: BitBoard,
+    /// Enemy attacks with the king removed from occupancy (for x-rays)
+    /// squares the king may not move to.
+    pub king_danger: BitBoard,
     /// Squares non-king pieces may land on: full, block-or-capture, or empty.
-    check_mask: BitBoard,
+    pub check_mask: BitBoard,
 }
 
 impl LegalCtx {
@@ -118,6 +122,7 @@ impl LegalCtx {
 
         LegalCtx {
             king_sq,
+            checkers,
             num_checkers,
             pinned,
             king_danger,
@@ -172,7 +177,7 @@ impl GameState {
     /// is legal and every legal move is emitted; in double check only
     /// king moves come back, and castling is skipped whenever the king
     /// is in check or the transit squares are attacked.
-    pub fn generate_moves(&self, moves: &mut MoveList) {
+    pub fn generate_moves(&self, moves: &mut MoveList) -> LegalCtx {
         let ctx = LegalCtx::new(self);
         let me = self.side_to_move;
         let friendly = self.occupancies[me as usize];
@@ -182,7 +187,7 @@ impl GameState {
         self.add_legal_king_moves(&ctx, friendly, enemy, moves);
 
         if ctx.num_checkers >= 2 {
-            return;
+            return ctx;
         }
 
         if ctx.num_checkers == 0 {
@@ -192,6 +197,7 @@ impl GameState {
         self.add_legal_pawn_moves(&ctx, moves);
         self.add_legal_knight_moves(&ctx, friendly, enemy, moves);
         self.add_legal_slider_moves(&ctx, friendly, enemy, moves);
+        ctx
     }
 
     /// King moves restricted to squares not in [`LegalCtx::king_danger`].

@@ -301,9 +301,7 @@ impl Searcher {
         // Snapshot the move-ordering signal that depends on the buffer's
         // contents but not its order — pull it before `ordered()` borrows
         // `buf` mutably.
-        let history_top = self
-            .move_scorer
-            .find_history_top(state.side_to_move, &buf);
+        let history_top = self.move_scorer.find_history_top(state.side_to_move, &buf);
         let mut history_top_tried = false;
 
         let mut best_move = None;
@@ -484,10 +482,10 @@ impl Searcher {
 
         let in_check = state.is_in_check(state.side_to_move);
 
-        // Outside of check, only keep captures and promotions
-        // (hen in check, keep everything
+        // If not in check, keep only captures and promotions
         if !in_check {
-            buf.moves_mut().retain(|&mv| { mv.is_capture() || mv.is_promotion() });
+            buf.moves_mut()
+                .retain(|&mv| mv.is_capture() || mv.is_promotion());
         }
 
         // Stand-pat is only valid when not in check
@@ -577,11 +575,17 @@ mod tests {
         history
     }
 
-    fn assert_move_sequence(mut state: GameState, expected_moves: &[&str], search_depth: u8) {
+    fn assert_best_move_sequence(mut state: GameState, expected_moves: &[&str], search_depth: u8) {
         let best_moves = get_best_moves_till_limit(&mut state, search_depth, expected_moves.len());
+        assert_move_sequence(&best_moves, expected_moves);
+    }
+
+    fn assert_move_sequence(best_moves: &[Move], expected_moves: &[&str]) {
         assert_eq!(best_moves.len(), expected_moves.len());
         for (i, mv) in best_moves.iter().enumerate() {
-            assert_eq!(mv.to_uci(), expected_moves[i]);
+            if expected_moves[i] != "-" {
+                assert_eq!(mv.to_uci(), expected_moves[i]);
+            }
         }
     }
 
@@ -589,7 +593,7 @@ mod tests {
     fn test_search_mate_in_one() {
         let state = GameState::from_fen("3r4/1K6/2Nb4/2kb4/8/8/3PB3/8 w - - 0 1").unwrap();
         let best_moves_expected = ["d2d4"];
-        assert_move_sequence(state, &best_moves_expected, 4);
+        assert_best_move_sequence(state, &best_moves_expected, 4);
     }
 
     #[test]
@@ -597,7 +601,23 @@ mod tests {
         let state =
             GameState::from_fen("5rk1/5ppp/2p5/1p6/1Q1p1P2/2Pq4/bP2R2P/rNK1R3 w - - 0 24").unwrap();
         let best_moves_expected = ["b4f8", "g8f8", "e2e8"];
-        assert_move_sequence(state, &best_moves_expected, 4);
+        assert_best_move_sequence(state, &best_moves_expected, 4);
+    }
+
+    #[test]
+    fn test_search_mate_in_three() {
+        let state = GameState::from_fen("4k1r1/R6p/4Nb2/4n3/6Pq/2P4P/3Q3K/5R2 w - - 2 2").unwrap();
+        let best_moves_expected = ["d2d8", "f6d8", "f1f8", "g8f8", "e6g7"];
+        assert_best_move_sequence(state, &best_moves_expected, 5);
+    }
+
+    #[test]
+    fn test_search_mate_in_four() {
+        let state =
+            GameState::from_fen("3qr2k/1p3rbp/2p3p1/p7/P2pBNn1/1P3n2/6P1/B1Q1RR1K b - - 1 30")
+                .unwrap();
+        let best_moves_expected = ["d8h4", "f4h3", "h4g3", "c1f4", "f7f4", "-", "g3h2"];
+        assert_best_move_sequence(state, &best_moves_expected, 7);
     }
 
     #[test]
@@ -606,31 +626,30 @@ mod tests {
             GameState::from_fen("5rk1/5ppp/2p5/1p6/1Q1p1P2/2Pq4/bP2R2P/rNK1R3 w - - 0 24").unwrap();
         let mut searcher = Searcher::new();
         let result = searcher.search(&mut state, 4, None::<fn(SearchResult)>);
-        let pv: Vec<String> = result.pv.iter().map(|m| m.to_uci()).collect();
-        assert_eq!(pv, vec!["b4f8", "g8f8", "e2e8"]);
-        assert_eq!(
-            result.best_move().map(|m| m.to_uci()),
-            Some("b4f8".to_string())
-        );
+        let best_moves: Vec<Move> = result.pv.iter().copied().collect();
+        assert_move_sequence(&best_moves, &["b4f8", "g8f8", "e2e8"]);
     }
 
     #[test]
     fn test_search_returns_full_pv_for_mate_in_three() {
-        // Mate-in-3 (5 plies). At depth 5 the in-search PV may truncate at TT
-        // cutoffs; TT-replay should extend it back to the full forced line.
         let mut state =
             GameState::from_fen("4k1r1/R6p/4Nb2/4n3/6Pq/2P4P/3Q3K/5R2 w - - 2 2").unwrap();
         let mut searcher = Searcher::new();
         let result = searcher.search(&mut state, 5, None::<fn(SearchResult)>);
-        let pv: Vec<String> = result.pv.iter().map(|m| m.to_uci()).collect();
-        assert_eq!(pv, vec!["d2d8", "f6d8", "f1f8", "g8f8", "e6g7"]);
+        let best_moves: Vec<Move> = result.pv.iter().copied().collect();
+        assert_move_sequence(&best_moves, &["d2d8", "f6d8", "f1f8", "g8f8", "e6g7"]);
     }
 
     #[test]
-    fn test_search_mate_in_three() {
-        let state = GameState::from_fen("4k1r1/R6p/4Nb2/4n3/6Pq/2P4P/3Q3K/5R2 w - - 2 2").unwrap();
-        let best_moves_expected = ["d2d8", "f6d8", "f1f8", "g8f8", "e6g7"];
-        assert_move_sequence(state, &best_moves_expected, 5);
+    fn test_search_returns_full_pv_for_mate_in_four() {
+        let mut state =
+            GameState::from_fen("3qr2k/1p3rbp/2p3p1/p7/P2pBNn1/1P3n2/6P1/B1Q1RR1K b - - 1 30")
+                .unwrap();
+        let mut searcher = Searcher::new();
+        let result = searcher.search(&mut state, 7, None::<fn(SearchResult)>);
+        let best_moves: Vec<Move> = result.pv.iter().copied().collect();
+        let best_moves_expected = ["d8h4", "f4h3", "h4g3", "c1f4", "f7f4", "-", "g3h2"];
+        assert_move_sequence(&best_moves, &best_moves_expected);
     }
 
     fn play_moves(state: &mut GameState, uci_moves: &[&str]) -> Box<ZobristHashList> {
@@ -759,5 +778,4 @@ mod tests {
         let result = searcher.search(&mut state, 1, None::<fn(SearchResult)>);
         assert_eq!(result.evaluation, 0);
     }
-
 }

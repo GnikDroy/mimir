@@ -21,6 +21,7 @@ pub mod move_generator_pseudo_legal;
 pub mod move_score;
 pub mod move_scorer;
 pub mod nnue;
+pub mod null_move;
 pub mod pv_table;
 pub mod score;
 pub mod search;

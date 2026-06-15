@@ -184,7 +184,7 @@ impl Searcher {
 
         self.time_control.set_search_deadline(state.side_to_move);
         for depth in 1..=max_depth {
-            match self.alpha_beta(state, depth, 0, i32::MIN / 2, i32::MAX / 2) {
+            match self.alpha_beta(state, depth, 0, i32::MIN / 2, i32::MAX / 2, true) {
                 Some((_, eval)) => {
                     best_eval = eval;
                     pv = self.root_pv(state);
@@ -227,6 +227,7 @@ impl Searcher {
         ply: usize,
         mut alpha: i32,
         mut beta: i32,
+        do_null: bool,
     ) -> Option<(Option<Move>, i32)> {
         // Reset this ply's PV. Early returns (draw, depth==0, TT cutoff) will
         // leave it empty; the parent then sees an empty child PV and truncates.
@@ -245,7 +246,8 @@ impl Searcher {
 
         // Check extension: spend one extra ply when the side to move is in check.
         // Applied before quiescence so we never drop into quiescence while in check.
-        let depth = depth + state.is_in_check(state.side_to_move) as u8;
+        let in_check = state.is_in_check(state.side_to_move);
+        let depth = depth + in_check as u8;
 
         if depth == 0 {
             return self
@@ -296,6 +298,59 @@ impl Searcher {
             }
         }
 
+        // Null move pruning: pass the turn and search at reduced depth with
+        // a null window around beta. If the opponent still can't beat us
+        // after a free tempo, our position is so good we can cut without
+        // searching real moves.
+        //
+        // Guards:
+        // - `ply > 0`: root must produce a best move.
+        // - `do_null`: prevents consecutive null moves (a double pass gives
+        //   the opponent two tempi and breaks soundness).
+        // - `!in_check`: a null while in check is an illegal pass.
+        // - `depth >= NMP_MIN_DEPTH`: at very low depth the reduced search
+        //   would collapse into qsearch, defeating the point.
+        // - `position_suitable_for_null_move`: zugzwang guard for king-and-pawn endings.
+        // - `beta` not a mate score: mate-bound comparisons are meaningless.
+        const NMP_MIN_DEPTH: u8 = 3;
+
+        // Historically 2 gives good reduction, but can do adaptive reduction later.
+        const NMP_REDUCTION: u8 = 2;
+        if ply > 0
+            && do_null
+            && !in_check
+            && depth >= NMP_MIN_DEPTH
+            && state.position_suitable_for_null_move()
+            && score::mate_in_plies(beta).is_none()
+        {
+            self.analytics.null_move_attempts += 1;
+            let undo = state.make_null_move();
+            let null_score = self
+                .alpha_beta(
+                    state,
+                    depth - 1 - NMP_REDUCTION,
+                    ply + 1,
+                    -beta,
+                    -beta + 1,
+                    false,
+                )
+                .map(|(_, e)| -e);
+            state.unmake_null_move(&undo);
+            let null_score = null_score?;
+
+            if null_score >= beta {
+                self.analytics.null_move_cutoffs += 1;
+                // Don't return mate scores from NMP — we never proved a real
+                // mate exists, only that passing didn't lose.
+                let clamped = if score::mate_in_plies(null_score).is_some() {
+                    beta
+                } else {
+                    null_score
+                };
+                return Some((None, clamped));
+            }
+        }
+
         // Generate and score moves into a stack-local buffer.
         let tt_move = tt_entry.and_then(|entry| entry.best_move);
         let mut buf = MoveScore::new();
@@ -328,7 +383,7 @@ impl Searcher {
                 self.position_history.push(state.zobrist_hash);
                 let undo = state.make_move(mv);
                 let eval = self
-                    .alpha_beta(state, depth - 1, ply + 1, -beta, -alpha)
+                    .alpha_beta(state, depth - 1, ply + 1, -beta, -alpha, true)
                     .map(|(_, e)| -e);
                 state.unmake_move(mv, &undo);
                 self.position_history.pop();
@@ -343,7 +398,7 @@ impl Searcher {
                 self.position_history.push(state.zobrist_hash);
                 let undo = state.make_move(mv);
                 let scout = self
-                    .alpha_beta(state, depth - 1, ply + 1, -alpha - 1, -alpha)
+                    .alpha_beta(state, depth - 1, ply + 1, -alpha - 1, -alpha, true)
                     .map(|(_, e)| -e);
                 state.unmake_move(mv, &undo);
                 self.position_history.pop();
@@ -355,7 +410,7 @@ impl Searcher {
                     self.position_history.push(state.zobrist_hash);
                     let undo = state.make_move(mv);
                     let eval = self
-                        .alpha_beta(state, depth - 1, ply + 1, -beta, -alpha)
+                        .alpha_beta(state, depth - 1, ply + 1, -beta, -alpha, true)
                         .map(|(_, e)| -e);
                     state.unmake_move(mv, &undo);
                     self.position_history.pop();

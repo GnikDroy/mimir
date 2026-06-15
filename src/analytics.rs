@@ -43,6 +43,11 @@ pub struct SearchAnalytics {
     /// and shouldn't dilute the re-search rate.
     pub pvs_open_window_scouts: u64,
     pub pvs_re_searches: u64,
+    /// Times null move pruning was attempted (passed all guards).
+    pub null_move_attempts: u64,
+    /// Subset of `null_move_attempts` where the reduced null-window search
+    /// failed high and we cut.
+    pub null_move_cutoffs: u64,
     /// Times the TT-suggested move was reached in the move loop.
     pub tt_move_tried: u64,
     /// Times the TT-suggested move caused the beta cutoff.
@@ -107,7 +112,7 @@ const LABEL_WIDTH: usize = 38;
 
 impl fmt::Display for SearchAnalytics {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // --- Top-level search metadata -----------------------------------
+        // Top-level search metadata
         writeln!(f, "{:<w$}{}", "Depth reached:", self.depth, w = LABEL_WIDTH)?;
         writeln!(
             f,
@@ -132,7 +137,7 @@ impl fmt::Display for SearchAnalytics {
         )?;
         writeln!(f)?;
 
-        // --- Node counts -------------------------------------------------
+        // Node counts
         writeln!(
             f,
             "{:<w$}{}",
@@ -156,7 +161,7 @@ impl fmt::Display for SearchAnalytics {
         )?;
         writeln!(f)?;
 
-        // --- Alpha-beta cutoff rates ------------------------------------
+        // Alpha-beta cutoff rates
         writeln!(
             f,
             "{:<w$}{} ({:.1}% of main-search nodes)",
@@ -189,7 +194,7 @@ impl fmt::Display for SearchAnalytics {
         )?;
         writeln!(f)?;
 
-        // --- Transposition table health ---------------------------------
+        // Transposition table health
         writeln!(
             f,
             "{:<w$}{}",
@@ -228,7 +233,7 @@ impl fmt::Display for SearchAnalytics {
         )?;
         writeln!(f)?;
 
-        // --- Principal variation search ---------------------------------
+        // Principal variation search
         writeln!(
             f,
             "{:<w$}{}",
@@ -254,7 +259,25 @@ impl fmt::Display for SearchAnalytics {
         )?;
         writeln!(f)?;
 
-        // --- Move ordering quality --------------------------------------
+        // Null move pruning
+        writeln!(
+            f,
+            "{:<w$}{}",
+            "Null move attempts:",
+            with_commas(self.null_move_attempts),
+            w = LABEL_WIDTH,
+        )?;
+        writeln!(
+            f,
+            "{:<w$}{} ({:.1}% of attempts)",
+            "Null move cutoffs:",
+            with_commas(self.null_move_cutoffs),
+            pct(self.null_move_cutoffs, self.null_move_attempts),
+            w = LABEL_WIDTH,
+        )?;
+        writeln!(f)?;
+
+        // Move ordering quality
         writeln!(
             f,
             "{:<w$}{}",

@@ -8,9 +8,9 @@
 //!
 //! The budget is a simple "split remaining time across `movestogo`
 //! moves and add half the increment", with a small safety buffer to
-//! avoid losing on time due to UCI round-trip overhead.
+//! avoid losing on time due to UCI overhead.
 //!
-//! This strategy is competitive according the
+//! This strategy is competitive:
 //! [Chess Programming Wiki](https://www.chessprogramming.org/Time_Management)
 
 use std::time::{Duration, Instant};
@@ -19,30 +19,28 @@ use crate::core::Color;
 
 /// UCI clock state plus the current search deadline.
 ///
-/// `base_time` / `increment` are the *initial* values supplied at
-/// construction and are used as fallbacks when the GUI reports zero
-/// remaining time (some adapters do this for `movestogo`-style games).
-/// The active values come from `wtime`/`btime`/`winc`/`binc`, refreshed
-/// per `go` command via [`update_clock`](Self::update_clock).
+/// Clock fields (`wtime`/`btime`/`winc`/`binc`/`movestogo`/`move_time`)
+/// are refreshed per `go` command via
+/// [`update_clock`](Self::update_clock). 
+/// Multiple timing fields may be present at once; the search deadline
+/// takes the *strictest* of the resulting candidate budgets.
 ///
 /// `search_start` and `search_deadline` are managed by
 /// [`set_search_deadline`](Self::set_search_deadline) and
 /// [`clear_search_deadline`](Self::clear_search_deadline); they are
-/// `None` outside an active search.
+/// `None` outside an active search. A `None` `search_deadline` during
+/// an active search means no time bound (search runs to depth or until
+/// `stop`).
 #[derive(Debug, Clone, Copy)]
 pub struct TimeControl {
-    /// Initial base time, kept as a fallback if the live clock is zero.
-    pub base_time: Duration,
-    /// Initial increment, kept as a fallback if the live increment is zero.
-    pub increment: Duration,
     /// White's remaining time on the live clock.
-    pub wtime: Duration,
+    pub wtime: Option<Duration>,
     /// Black's remaining time on the live clock.
-    pub btime: Duration,
+    pub btime: Option<Duration>,
     /// White's per-move increment on the live clock.
-    pub winc: Duration,
+    pub winc: Option<Duration>,
     /// Black's per-move increment on the live clock.
-    pub binc: Duration,
+    pub binc: Option<Duration>,
     /// Moves remaining until the next time control, if specified.
     pub movestogo: Option<u32>,
     /// Fixed per-move time override (`go movetime`); when set, replaces
@@ -53,16 +51,13 @@ pub struct TimeControl {
 }
 
 impl TimeControl {
-    /// Creates a [`TimeControl`] seeded with a single base/increment
-    /// pair for both sides and no active search window.
-    pub fn new(base_time: Duration, increment: Duration) -> Self {
+    /// Creates a [`TimeControl`]
+    pub fn new() -> Self {
         Self {
-            base_time,
-            increment,
-            wtime: base_time,
-            btime: base_time,
-            winc: increment,
-            binc: increment,
+            wtime: None,
+            btime: None,
+            winc: None,
+            binc: None,
             movestogo: None,
             move_time: None,
             search_start: None,
@@ -70,15 +65,13 @@ impl TimeControl {
         }
     }
 
-    /// Refreshes the live clock fields from a `go` command. The base
-    /// time and increment configured at construction are left
-    /// untouched so they remain available as fallbacks.
+    /// Refreshes the live clock fields from a `go` command.
     pub fn update_clock(
         &mut self,
-        wtime: Duration,
-        btime: Duration,
-        winc: Duration,
-        binc: Duration,
+        wtime: Option<Duration>,
+        btime: Option<Duration>,
+        winc: Option<Duration>,
+        binc: Option<Duration>,
         movestogo: Option<u32>,
         move_time: Option<Duration>,
     ) {
@@ -90,59 +83,46 @@ impl TimeControl {
         self.move_time = move_time;
     }
 
-    /// Computes how long to spend on this move.
+    /// Computes how long to spend on this move, adhering to every timing
+    /// field present on the `go` command and returning the strictest
+    /// (smallest) of them. Returns `None` when no timing field was set
+    /// — it runs to depth or until `stop`.
     ///
-    /// - If `move_time` is set, returns it verbatim.
-    /// - Otherwise: split `remaining_time` over `movestogo` (defaulting
-    ///   to 20 when absent), add half of the increment, then subtract a
-    ///   50ms safety buffer for UCI overhead.
+    /// Candidate budgets:
+    /// - `move_time` (from `go movetime`) — used verbatim.
+    /// - clock budget (from `wtime`/`btime` for the side to move)
     ///
-    /// Zero-valued remaining time or increment are replaced by the
-    /// initial `base_time`/`increment` to handle adapters that don't
-    /// report a live clock.
-    fn move_time_budget(&self, side_to_move: Color) -> Duration {
-        if let Some(move_time) = self.move_time {
-            return move_time;
-        }
+    /// A safety buffer is subtracted from the chosen budget to
+    /// cover UCI round-trip overhead.
+    fn move_time_budget(&self, side_to_move: Color) -> Option<Duration> {
+        const SAFETY_BUFFER: Duration = Duration::from_millis(25);
 
-        let (remaining_time, increment) = match side_to_move {
+        let (remaining, increment) = match side_to_move {
             Color::White => (self.wtime, self.winc),
             Color::Black => (self.btime, self.binc),
         };
 
-        let fallback_remaining = if remaining_time.is_zero() {
-            self.base_time
-        } else {
-            remaining_time
-        };
-        let fallback_increment = if increment.is_zero() {
-            self.increment
-        } else {
-            increment
-        };
+        let clock_budget = remaining.map(|rem| {
+            let moves_left = self.movestogo.unwrap_or(20).max(1);
+            let inc = increment.unwrap_or(Duration::ZERO);
+            rem / moves_left + inc / 2
+        });
 
-        let moves_left = self.movestogo.unwrap_or(20).max(1) as u128;
-        let base_ms = fallback_remaining.as_millis();
-        let inc_ms = fallback_increment.as_millis();
-        let budget_ms = (base_ms / moves_left) + (inc_ms / 2);
-        let budget_ms = budget_ms.max(1).min(u128::from(u64::MAX));
-
-        // give ourselves a little extra time buffer to avoid time forfeits due to overhead
-        let buffer_ms = 50;
-        let budget_ms = budget_ms.saturating_sub(buffer_ms);
-
-        Duration::from_millis(budget_ms as u64)
+        [self.move_time, clock_budget]
+            .into_iter()
+            .flatten()
+            .min()
+            .map(|b| b.saturating_sub(SAFETY_BUFFER))
     }
 
     /// Starts a new search window: stamps the start instant and computes
-    /// a deadline from the current clock state. Must be called before
-    /// the search begins for
-    /// [`is_time_up`](Self::is_time_up) and
-    /// [`get_elapsed`](Self::get_elapsed) to behave correctly.
+    /// a deadline from the current clock state. A `None` deadline means
+    /// no time bound was supplied; [`is_time_up`](Self::is_time_up) will
+    /// keep returning `false` and the search runs to depth.
     pub fn set_search_deadline(&mut self, side_to_move: Color) {
-        self.search_start = Some(Instant::now());
-        let budget = self.move_time_budget(side_to_move);
-        self.search_deadline = Some(Instant::now() + budget);
+        let now = Instant::now();
+        self.search_start = Some(now);
+        self.search_deadline = self.move_time_budget(side_to_move).map(|b| now + b);
     }
 
     /// Time spent since the current search started, or one second as a
@@ -170,5 +150,11 @@ impl TimeControl {
             Some(dl) => Instant::now() >= dl,
             None => false,
         }
+    }
+}
+
+impl Default for TimeControl {
+    fn default() -> Self {
+        TimeControl::new()
     }
 }

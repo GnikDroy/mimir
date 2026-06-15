@@ -51,7 +51,7 @@ const QUIESCENCE_NODE_CHECK_INTERVAL: u64 = 128;
 
 impl Searcher {
     pub fn new() -> Self {
-        let time_control = TimeControl::new(Duration::from_mins(1), Duration::from_secs(0));
+        let time_control = TimeControl::new();
 
         Searcher {
             position_history: Box::new(ZobristHashList::default()),
@@ -148,10 +148,10 @@ impl Searcher {
 
     pub fn update_clock(
         &mut self,
-        wtime: Duration,
-        btime: Duration,
-        winc: Duration,
-        binc: Duration,
+        wtime: Option<Duration>,
+        btime: Option<Duration>,
+        winc: Option<Duration>,
+        binc: Option<Duration>,
         movestogo: Option<u32>,
         move_time: Option<Duration>,
     ) {

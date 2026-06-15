@@ -17,12 +17,11 @@ use std::sync::{
     Arc, Mutex,
 };
 use std::thread;
-use std::time::Duration;
 
 use crate::bitboard::{BitBoard, BitBoardMethods};
 use crate::core::*;
 use crate::nnue::evaluate;
-use crate::search::{SearchResult, Searcher};
+use crate::search::{SearchResult, Searcher, MAX_PLY};
 use crate::state::GameState;
 
 use super::parser::{GoCommand, UCICommand};
@@ -286,20 +285,22 @@ impl UCIAdapter {
 
         thread::spawn(move || {
             let mut searcher = Searcher::new();
+
+            let depth = if go.infinite {
+                MAX_PLY as u8
+            } else {
+                go.depth.unwrap_or(MAX_PLY as u8)
+            };
+
             searcher.update_clock(
-                go.wtime.unwrap_or(Duration::ZERO),
-                go.btime.unwrap_or(Duration::ZERO),
-                go.winc.unwrap_or(Duration::ZERO),
-                go.binc.unwrap_or(Duration::ZERO),
+                go.wtime,
+                go.btime,
+                go.winc,
+                go.binc,
                 go.movestogo,
                 go.movetime,
             );
 
-            let depth = if go.infinite {
-                32
-            } else {
-                go.depth.unwrap_or(32)
-            };
             let result = searcher.search(
                 &mut state,
                 depth,

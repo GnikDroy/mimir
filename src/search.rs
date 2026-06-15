@@ -2,9 +2,9 @@ use std::time::Duration;
 
 use crate::analytics::SearchAnalytics;
 use crate::core::*;
-use crate::nnue::evaluate;
 use crate::move_score::MoveScore;
 use crate::move_scorer::MoveScorer;
+use crate::nnue::evaluate;
 use crate::pv_table::PvTable;
 use crate::score;
 use crate::stack_vec::StackVec;
@@ -242,6 +242,10 @@ impl Searcher {
         {
             return Some((None, 0));
         }
+
+        // Check extension: spend one extra ply when the side to move is in check.
+        // Applied before quiescence so we never drop into quiescence while in check.
+        let depth = depth + state.is_in_check(state.side_to_move) as u8;
 
         if depth == 0 {
             return self

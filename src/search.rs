@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use crate::analytics::SearchAnalytics;
 use crate::core::*;
-use crate::evaluation::evaluate;
+use crate::nnue::evaluate;
 use crate::move_score::MoveScore;
 use crate::move_scorer::MoveScorer;
 use crate::pv_table::PvTable;
@@ -760,7 +760,7 @@ mod tests {
         let mut state =
             GameState::from_fen("1krqr3/p1p2n2/2Q3b1/p3n3/1b6/8/4BB2/5K2 w - - 0 1").unwrap();
         let mut searcher = Searcher::new();
-        let result = searcher.search(&mut state, 7, None::<fn(SearchResult)>);
+        let result = searcher.search(&mut state, 9, None::<fn(SearchResult)>);
         assert_eq!(result.evaluation, 0);
         assert_eq!(
             result.best_move().map(|m| m.to_uci()),

@@ -15,6 +15,7 @@
 use crate::attack_table::ATTACK_TABLE;
 use crate::bitboard::*;
 use crate::core::*;
+use crate::nnue::{self, Accumulator};
 use crate::zobrist::{ZobristHash, ZOBRIST_HASHER};
 
 /// Snapshot of the fields [`GameState::make_move`] cannot recompute
@@ -67,6 +68,10 @@ pub struct GameState {
     pub fullmove_number: u16,
     /// Incrementally maintained Zobrist key for this position.
     pub zobrist_hash: ZobristHash,
+    /// NNUE feature accumulators, one per perspective
+    /// (`[Color::White as usize]` = white-to-move, `[Color::Black as usize]` = black).
+    /// Kept up-to-date by `make_move`/`unmake_move`; consumed by [`crate::nnue::evaluate`].
+    pub accumulators: [Accumulator; Color::NUM],
 }
 
 impl GameState {
@@ -83,6 +88,7 @@ impl GameState {
             halfmove_clock: 0,
             fullmove_number: 1,
             zobrist_hash: 0,
+            accumulators: nnue::empty_accumulators(),
         };
         state.zobrist_hash = ZOBRIST_HASHER.hash(&state);
         state
@@ -173,6 +179,77 @@ impl GameState {
         !self.is_in_check(self.side_to_move) && self.no_moves()
     }
 
+    /// Adds a piece to the board at `sq`.
+    ///
+    /// `sq_bb` must equal `BitBoard::on(sq)`; the caller passes it in
+    /// so it can be reused when the same bitboard is also needed for
+    /// other mutations (e.g. shared `to_board` across a capture victim
+    /// and the moving piece's destination).
+    ///
+    /// Updates per-side `pieces` and `occupancies`, the running Zobrist
+    /// key, and the NNUE accumulators. Does **not** touch
+    /// `occupancies[2]` — `make_move` / `unmake_move` recompute it once
+    /// at the bottom.
+    #[inline(always)]
+    fn place_piece(
+        &mut self,
+        color: Color,
+        piece: Piece,
+        sq: Square,
+        sq_bb: BitBoard,
+        key: &mut ZobristHash,
+    ) {
+        self.pieces[color as usize][piece as usize] |= sq_bb;
+        self.occupancies[color as usize] |= sq_bb;
+        *key ^= ZOBRIST_HASHER.square[color as usize][piece as usize][sq as usize];
+        nnue::add_piece(&mut self.accumulators, color, piece, sq);
+    }
+
+    /// Removes a piece from the board at `sq`. See [`place_piece`] for
+    /// the `sq_bb` convention and the `occupancies[2]` invariant.
+    #[inline(always)]
+    fn remove_piece(
+        &mut self,
+        color: Color,
+        piece: Piece,
+        sq: Square,
+        sq_bb: BitBoard,
+        key: &mut ZobristHash,
+    ) {
+        self.pieces[color as usize][piece as usize] &= !sq_bb;
+        self.occupancies[color as usize] &= !sq_bb;
+        *key ^= ZOBRIST_HASHER.square[color as usize][piece as usize][sq as usize];
+        nnue::remove_piece(&mut self.accumulators, color, piece, sq);
+    }
+
+    /// Moves a piece of `color`/`piece` from `from` to `to`.
+    ///
+    /// `mask` must equal `BitBoard::on(from) | BitBoard::on(to)`. The
+    /// XOR-based form requires `from` to be set and `to` to be clear
+    /// in `pieces[color][piece]` and `occupancies[color]` at entry —
+    /// i.e. it is the caller's responsibility to remove any enemy
+    /// piece occupying `to` first.
+    ///
+    /// Swapping `from` and `to` reverses a previous `move_piece`
+    /// call exactly (used by [`unmake_move`]).
+    #[inline(always)]
+    fn move_piece(
+        &mut self,
+        color: Color,
+        piece: Piece,
+        from: Square,
+        to: Square,
+        mask: BitBoard,
+        key: &mut ZobristHash,
+    ) {
+        self.pieces[color as usize][piece as usize] ^= mask;
+        self.occupancies[color as usize] ^= mask;
+        *key ^= ZOBRIST_HASHER.square[color as usize][piece as usize][from as usize];
+        *key ^= ZOBRIST_HASHER.square[color as usize][piece as usize][to as usize];
+        nnue::remove_piece(&mut self.accumulators, color, piece, from);
+        nnue::add_piece(&mut self.accumulators, color, piece, to);
+    }
+
     /// Applies `move_encoded` to the position and returns an
     /// [`UndoInfo`] that [`unmake_move`](Self::unmake_move) needs to
     /// reverse it.
@@ -216,55 +293,43 @@ impl GameState {
             key ^= ZOBRIST_HASHER.en_passant[file];
         }
 
-        // Remove piece from source
-        self.pieces[moving_color as usize][moving_piece as usize] &= !from_board;
-        self.occupancies[moving_color as usize] &= !from_board;
-
-        // XOR out moving piece from source square
-        key ^= ZOBRIST_HASHER.square[moving_color as usize][moving_piece as usize][from as usize];
-
-        // Place piece at destination
-        if move_encoded.is_promotion() {
-            let piece = move_encoded.get_promotion_piece().unwrap().to_piece();
-            self.pieces[moving_color as usize][piece as usize] |= to_board;
-            self.occupancies[moving_color as usize] |= to_board;
-
-            // promotion: add promoted piece at destination
-            key ^= ZOBRIST_HASHER.square[moving_color as usize][piece as usize][to as usize];
-        } else {
-            self.pieces[moving_color as usize][moving_piece as usize] |= to_board;
-            self.occupancies[moving_color as usize] |= to_board;
-
-            // add moved piece at destination
-            key ^= ZOBRIST_HASHER.square[moving_color as usize][moving_piece as usize][to as usize];
-        }
-
         let captured_piece = move_encoded.get_captured_piece();
+        let mover_mask = from_board | to_board;
 
-        // Handle normal captures (en passant is handled separately)
+        // Remove the captured piece first so `move_piece` below sees a
+        // clear `to` square. En passant has its own capture square,
+        // handled further down.
         if let Some(captured) = captured_piece {
             if !move_encoded.is_enpassant() {
-                self.pieces[enemy_color as usize][captured as usize] &= !to_board;
-                self.occupancies[enemy_color as usize] &= !to_board;
-
-                // XOR out captured piece on destination
-                key ^= ZOBRIST_HASHER.square[enemy_color as usize][captured as usize][to as usize];
+                self.remove_piece(enemy_color, captured, to, to_board, &mut key);
             }
         }
 
-        // Handle en passant captures
+        // Move the mover. Promotions are asymmetric (pawn at `from`,
+        // promoted piece at `to`) so they split into remove + place.
+        if move_encoded.is_promotion() {
+            let piece = move_encoded.get_promotion_piece().unwrap().to_piece();
+            self.remove_piece(moving_color, Piece::Pawn, from, from_board, &mut key);
+            self.place_piece(moving_color, piece, to, to_board, &mut key);
+        } else {
+            self.move_piece(moving_color, moving_piece, from, to, mover_mask, &mut key);
+        }
+
+        // En passant: pawn capture happens on a different square from
+        // the mover's destination.
         if move_encoded.is_enpassant() {
             let capture_square = match moving_color {
                 Color::White => Square::index(to as u8 - 8),
                 Color::Black => Square::index(to as u8 + 8),
             };
             let capture_board = BitBoard::on(capture_square);
-            self.pieces[enemy_color as usize][Piece::Pawn as usize] &= !capture_board;
-            self.occupancies[enemy_color as usize] &= !capture_board;
-
-            // XOR out the captured pawn for en passant
-            key ^= ZOBRIST_HASHER.square[enemy_color as usize][Piece::Pawn as usize]
-                [capture_square as usize];
+            self.remove_piece(
+                enemy_color,
+                Piece::Pawn,
+                capture_square,
+                capture_board,
+                &mut key,
+            );
         }
 
         // Update castling rights
@@ -321,18 +386,15 @@ impl GameState {
                 (Color::Black, true) => (Square::H8, Square::F8),
                 (Color::Black, false) => (Square::A8, Square::D8),
             };
-            let rook_from_board = BitBoard::on(rook_from);
-            let rook_to_board = BitBoard::on(rook_to);
-            self.pieces[moving_color as usize][Piece::Rook as usize] &= !rook_from_board;
-            self.pieces[moving_color as usize][Piece::Rook as usize] |= rook_to_board;
-            self.occupancies[moving_color as usize] &= !rook_from_board;
-            self.occupancies[moving_color as usize] |= rook_to_board;
-
-            // XOR rook move for castling
-            key ^= ZOBRIST_HASHER.square[moving_color as usize][Piece::Rook as usize]
-                [rook_from as usize];
-            key ^= ZOBRIST_HASHER.square[moving_color as usize][Piece::Rook as usize]
-                [rook_to as usize];
+            let rook_mask = BitBoard::on(rook_from) | BitBoard::on(rook_to);
+            self.move_piece(
+                moving_color,
+                Piece::Rook,
+                rook_from,
+                rook_to,
+                rook_mask,
+                &mut key,
+            );
         }
 
         self.occupancies[2] =
@@ -402,55 +464,42 @@ impl GameState {
         let moving_color = self.side_to_move;
         let enemy_color = moving_color.opposite();
 
-        // Remove piece from destination and restore pawn at source for promotions
-        // Or for regular moves, just find and move the piece back
+        let mover_mask = from_board | to_board;
+
+        // Reverse the mover: bring it back to `from`. Promotions are
+        // asymmetric (promoted piece at `to`, pawn at `from`) so they
+        // split into remove + place.
         if move_encoded.is_promotion() {
             let piece = move_encoded.get_promotion_piece().unwrap().to_piece();
-            self.pieces[moving_color as usize][piece as usize] &= !to_board;
-            self.pieces[moving_color as usize][Piece::Pawn as usize] |= from_board;
-            self.occupancies[moving_color as usize] &= !to_board;
-            self.occupancies[moving_color as usize] |= from_board;
-
-            // XOR out promoted piece at destination, xor in pawn at source
-            key ^= ZOBRIST_HASHER.square[moving_color as usize][piece as usize][to as usize];
-            key ^=
-                ZOBRIST_HASHER.square[moving_color as usize][Piece::Pawn as usize][from as usize];
+            self.remove_piece(moving_color, piece, to, to_board, &mut key);
+            self.place_piece(moving_color, Piece::Pawn, from, from_board, &mut key);
         } else {
             let moving_piece = undo_info.moved_piece;
-            self.pieces[moving_color as usize][moving_piece as usize] &= !to_board;
-            self.pieces[moving_color as usize][moving_piece as usize] |= from_board;
-            self.occupancies[moving_color as usize] &= !to_board;
-            self.occupancies[moving_color as usize] |= from_board;
-
-            // XOR out moved piece at destination, xor in at source
-            key ^= ZOBRIST_HASHER.square[moving_color as usize][moving_piece as usize][to as usize];
-            key ^=
-                ZOBRIST_HASHER.square[moving_color as usize][moving_piece as usize][from as usize];
+            // Swap `from`/`to` to reverse the original make_move call.
+            self.move_piece(moving_color, moving_piece, to, from, mover_mask, &mut key);
         }
 
-        // Handle en passant & capture piece restore
+        // Restore the captured piece. For en passant the capture
+        // square sits behind `to`.
         if move_encoded.is_enpassant() {
             let capture_square = match moving_color {
                 Color::White => Square::index(to as u8 - File::NUM as u8),
                 Color::Black => Square::index(to as u8 + File::NUM as u8),
             };
             let capture_board = BitBoard::on(capture_square);
-            self.pieces[enemy_color as usize][Piece::Pawn as usize] |= capture_board;
-            self.occupancies[enemy_color as usize] |= capture_board;
-
-            // XOR in the restored pawn for en passant
-            key ^= ZOBRIST_HASHER.square[enemy_color as usize][Piece::Pawn as usize]
-                [capture_square as usize];
+            self.place_piece(
+                enemy_color,
+                Piece::Pawn,
+                capture_square,
+                capture_board,
+                &mut key,
+            );
         } else if move_encoded.is_capture() {
             let captured = undo_info.captured_piece.unwrap();
-            self.pieces[enemy_color as usize][captured as usize] |= to_board;
-            self.occupancies[enemy_color as usize] |= to_board;
-
-            // XOR in the restored captured piece
-            key ^= ZOBRIST_HASHER.square[enemy_color as usize][captured as usize][to as usize];
+            self.place_piece(enemy_color, captured, to, to_board, &mut key);
         }
 
-        // Handle castling unmake
+        // Handle castling unmake — swap rook back.
         if move_encoded.is_castle() {
             let (rook_from, rook_to) = match (moving_color, move_encoded.is_kingside_castle()) {
                 (Color::White, true) => (Square::H1, Square::F1),
@@ -458,18 +507,15 @@ impl GameState {
                 (Color::Black, true) => (Square::H8, Square::F8),
                 (Color::Black, false) => (Square::A8, Square::D8),
             };
-            let rook_from_board = BitBoard::on(rook_from);
-            let rook_to_board = BitBoard::on(rook_to);
-            self.pieces[moving_color as usize][Piece::Rook as usize] &= !rook_to_board;
-            self.pieces[moving_color as usize][Piece::Rook as usize] |= rook_from_board;
-            self.occupancies[moving_color as usize] &= !rook_to_board;
-            self.occupancies[moving_color as usize] |= rook_from_board;
-
-            // XOR rook move reversal: remove rook at to, add at from
-            key ^= ZOBRIST_HASHER.square[moving_color as usize][Piece::Rook as usize]
-                [rook_to as usize];
-            key ^= ZOBRIST_HASHER.square[moving_color as usize][Piece::Rook as usize]
-                [rook_from as usize];
+            let rook_mask = BitBoard::on(rook_from) | BitBoard::on(rook_to);
+            self.move_piece(
+                moving_color,
+                Piece::Rook,
+                rook_to,
+                rook_from,
+                rook_mask,
+                &mut key,
+            );
         }
 
         self.occupancies[2] =

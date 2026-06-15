@@ -34,16 +34,7 @@ impl GameState {
     /// per rank), unknown side-to-move, bad castling char, bad en
     /// passant square, or unparseable clocks.
     pub fn from_fen(fen: &str) -> Result<Self, String> {
-        let mut gs = GameState {
-            pieces: [[BitBoard::EMPTY; Piece::NUM]; Color::NUM],
-            occupancies: [BitBoard::EMPTY; Color::NUM + 1],
-            side_to_move: Color::White,
-            castling_rights: 0,
-            en_passant: None,
-            halfmove_clock: 0,
-            fullmove_number: 1,
-            zobrist_hash: 0,
-        };
+        let mut gs = GameState::empty();
 
         let parts: Vec<&str> = fen.split_whitespace().collect();
         if parts.len() != 6 {
@@ -129,6 +120,7 @@ impl GameState {
             .map_err(|_| "Invalid FEN fullmove number")?;
 
         gs.zobrist_hash = ZOBRIST_HASHER.hash(&gs);
+        gs.accumulators = crate::nnue::refresh_from_state(&gs);
         Ok(gs)
     }
 

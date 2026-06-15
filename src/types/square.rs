@@ -131,8 +131,8 @@ impl Square {
     /// rank 2 ↔ rank 7, ...). Used to look up black-side PST values from
     /// white-relative tables.
     pub fn flip_vertical(&self) -> Self {
-        let (file, rank) = self.coordinate();
-        Self::from_coordinate(file, Rank::index(Rank::NUM - 1 - rank as usize))
+        let flipped_index = *self as usize ^ 56;
+        Square::index(flipped_index as u8)
     }
 
     /// Returns `true` if a pawn of the given colour reaching this square is

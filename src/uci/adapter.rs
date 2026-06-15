@@ -21,7 +21,7 @@ use std::time::Duration;
 
 use crate::bitboard::{BitBoard, BitBoardMethods};
 use crate::core::*;
-use crate::evaluation::evaluate;
+use crate::nnue::evaluate;
 use crate::search::{SearchResult, Searcher};
 use crate::state::GameState;
 

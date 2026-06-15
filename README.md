@@ -9,6 +9,8 @@ Although rewarding, creating a chess engine is a time consuming endeavour. Stron
 - Pseudo-legal bitboard move generation tested with several perft tests.
 - Zobrist hashing, transposition tables, and draw-by-repetition detection.
 - A PST based tapered evaluation function optimized by Texel's tuning.
+- 768 perspective NNUE based evalulation with incremental updates.
+  (the network used is beans.bin, Credits to @ciekce [Stormphrax] from discord for training the net)
 - Negamax alpha-beta pruning with iterative deepening depth first search and quiescence search to counter horizon effects.
 - Move ordering via hash moves from transposition tables, Most Valuable Victim - Least Valuable Aggressor (MVV-LVA) and Static Exchange Evaluation (SEE).
 - Killer moves and history heuristics for quiet moves.

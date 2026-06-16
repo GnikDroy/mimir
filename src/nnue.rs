@@ -10,7 +10,8 @@ const SCALE: i32 = 400;
 const QA: i16 = 255;
 const QB: i16 = 64;
 
-pub static NNUE: Network = unsafe { std::mem::transmute(*include_bytes!("../resources/beans.bin")) };
+pub static NNUE: Network =
+    unsafe { std::mem::transmute(*include_bytes!("../resources/beans.bin")) };
 
 #[inline]
 /// Square Clipped ReLU - Activation Function.
@@ -134,7 +135,10 @@ impl Accumulator {
         piece: Piece,
         square: Square,
     ) {
-        self.add_feature(Network::feature_index(perspective, piece_color, piece, square), net);
+        self.add_feature(
+            Network::feature_index(perspective, piece_color, piece, square),
+            net,
+        );
     }
 
     /// Removes the feature for a piece of `piece_color` on `square` from
@@ -148,7 +152,10 @@ impl Accumulator {
         piece: Piece,
         square: Square,
     ) {
-        self.remove_feature(Network::feature_index(perspective, piece_color, piece, square), net);
+        self.remove_feature(
+            Network::feature_index(perspective, piece_color, piece, square),
+            net,
+        );
     }
 
     /// Add a feature by raw input index.

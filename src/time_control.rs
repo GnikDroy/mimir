@@ -234,7 +234,14 @@ mod tests {
     #[test]
     fn test_movetime_collapses_soft_and_hard() {
         let mut tc = TimeControl::with_overhead(Duration::from_millis(50));
-        tc.update_clock(None, None, None, None, None, Some(Duration::from_millis(1000)));
+        tc.update_clock(
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(Duration::from_millis(1000)),
+        );
         let (soft, hard) = tc.move_time_budget(Color::White).unwrap();
         // Both should be movetime − overhead = 950ms.
         assert_eq!(hard, Duration::from_millis(950));

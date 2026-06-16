@@ -62,8 +62,11 @@ impl MoveScore {
     /// Score every move in the buffer with the quiescence ordering.
     pub fn score_quiescence(&mut self) {
         self.scores.clear();
-        self.scores
-            .extend(self.moves.iter().map(|&mv| MoveScorer::score_quiescence(mv)));
+        self.scores.extend(
+            self.moves
+                .iter()
+                .map(|&mv| MoveScorer::score_quiescence(mv)),
+        );
     }
 
     /// Iterate scored moves in descending order, one `O(n)` selection

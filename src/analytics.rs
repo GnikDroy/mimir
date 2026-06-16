@@ -227,10 +227,7 @@ impl fmt::Display for SearchAnalytics {
             "{:<w$}{} ({:.1}% of hits)",
             "Transposition table cuts:",
             with_commas(self.transposition_table_cuts),
-            pct(
-                self.transposition_table_cuts,
-                self.transposition_table_hits
-            ),
+            pct(self.transposition_table_cuts, self.transposition_table_hits),
             w = LABEL_WIDTH,
         )?;
         writeln!(
@@ -369,29 +366,41 @@ mod tests {
     use crate::search::{SearchResult, Searcher};
     use crate::state::GameState;
 
-    /// Profiling target: a single fixed-depth search from the kiwipete
-    /// position with no time control and no reporting.
+    /// Analytics target: a single fixed-depth search from the kiwipete position
     #[test]
     #[ignore]
-    fn profile_search_kiwipete_depth_10() {
+    fn analytics_search_kiwipete() {
         let mut state = GameState::from_fen(
             "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1",
         )
         .unwrap();
         let mut searcher = Searcher::new();
-        let result = searcher.search(&mut state, 10, None::<fn(SearchResult)>);
+        let result = searcher.search(&mut state, 14, None::<fn(SearchResult)>);
         println!("Game: {}", state);
         result.analytics.print();
     }
 
-    /// Profiling target: a single fixed-depth search from the kiwipete
-    /// position with no time control and no reporting.
+    /// analytics target: a single fixed-depth search from the starting position
     #[test]
     #[ignore]
-    fn profile_search_startpos_depth_10() {
+    fn analytics_search_startpos() {
         let mut state = GameState::new();
         let mut searcher = Searcher::new();
-        let result = searcher.search(&mut state, 10, None::<fn(SearchResult)>);
+        let result = searcher.search(&mut state, 14, None::<fn(SearchResult)>);
+        result.analytics.print();
+    }
+
+    /// analytics target: a single fixed-depth search from the najdorf
+    /// posioned pawn variation
+    #[test]
+    #[ignore]
+    fn analytics_search_najdorf_poisoned() {
+        let mut state = GameState::from_fen(
+            "rnb1kb1r/1p3ppp/pq1ppn2/6B1/3NPP2/2N5/PPP3PP/R2QKB1R w KQkq - 1 8",
+        )
+        .unwrap();
+        let mut searcher = Searcher::new();
+        let result = searcher.search(&mut state, 14, None::<fn(SearchResult)>);
         result.analytics.print();
     }
 }

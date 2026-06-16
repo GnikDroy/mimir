@@ -106,9 +106,10 @@ mod tests {
     #[test]
     fn test_null_move_clears_en_passant() {
         // 1. e2-e4 leaves an en passant square on e3.
-        let mut state =
-            crate::state::GameState::from_fen("rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/BNBQKBNR b KQkq e3 0 1")
-                .unwrap();
+        let mut state = crate::state::GameState::from_fen(
+            "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/BNBQKBNR b KQkq e3 0 1",
+        )
+        .unwrap();
         assert!(state.en_passant.is_some());
 
         let undo = state.make_null_move();
@@ -146,9 +147,10 @@ mod tests {
 
     #[test]
     fn test_null_move_zobrist_matches_full_recompute() {
-        let mut state =
-            crate::state::GameState::from_fen("rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/BNBQKBNR b KQkq e3 0 1")
-                .unwrap();
+        let mut state = crate::state::GameState::from_fen(
+            "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/BNBQKBNR b KQkq e3 0 1",
+        )
+        .unwrap();
 
         let _undo = state.make_null_move();
         assert_eq!(state.zobrist_hash, ZOBRIST_HASHER.hash(&state));

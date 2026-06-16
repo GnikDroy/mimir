@@ -324,6 +324,11 @@ impl Searcher {
             }
         }
 
+        // Static eval feeds the NMP eval guard below. Skip when in check:
+        // NMP refuses to fire there, and the eval is meaningless while the
+        // king is under attack.
+        let static_eval = if !in_check { Some(evaluate(state)) } else { None };
+
         // Null move pruning: pass the turn and search at reduced depth with
         // a null window around beta. If the opponent still can't beat us
         // after a free tempo, our position is so good we can cut without
@@ -338,6 +343,8 @@ impl Searcher {
         //   would collapse into qsearch, defeating the point.
         // - `position_suitable_for_null_move`: zugzwang guard for king-and-pawn endings.
         // - `beta` not a mate score: mate-bound comparisons are meaningless.
+        // - `static_eval >= beta`: if we're already losing on static eval,
+        //   passing the move is very unlikely to fail high.
         const NMP_MIN_DEPTH: u8 = 3;
 
         // Historically 2 gives good reduction, but can do adaptive reduction later.
@@ -348,6 +355,7 @@ impl Searcher {
             && depth >= NMP_MIN_DEPTH
             && state.position_suitable_for_null_move()
             && score::mate_in_plies(beta).is_none()
+            && static_eval.is_some_and(|e| e >= beta)
         {
             self.analytics.null_move_attempts += 1;
             let undo = state.make_null_move();

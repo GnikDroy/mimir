@@ -299,6 +299,7 @@ impl Searcher {
 
         // Check if transposition table has a valid entry for this position and depth,
         // and use it to potentially cut off the search early
+        let is_pv = beta > alpha + 1;
         let tt_entry = self.transposition_table.probe(state.zobrist_hash);
         if tt_entry.is_some() {
             self.analytics.transposition_table_entries_found += 1;
@@ -308,19 +309,25 @@ impl Searcher {
 
             self.analytics.transposition_table_hits += 1;
 
-            match entry.flag {
-                TranspositionFlag::Exact => {
+            // Skip TT cuts at PV nodes so an Exact/bound entry doesn't
+            // return before the PV row at this ply is populated — that
+            // would truncate the reported PV. The entry's best_move is
+            // still consumed below for move ordering.
+            if !is_pv {
+                match entry.flag {
+                    TranspositionFlag::Exact => {
+                        self.analytics.transposition_table_cuts += 1;
+                        return Some((entry.best_move, tt_score));
+                    }
+                    TranspositionFlag::LowerBound => alpha = alpha.max(tt_score),
+                    TranspositionFlag::UpperBound => beta = beta.min(tt_score),
+                }
+
+                // If the bound update causes a cutoff, skip searching this node.
+                if alpha >= beta {
                     self.analytics.transposition_table_cuts += 1;
                     return Some((entry.best_move, tt_score));
                 }
-                TranspositionFlag::LowerBound => alpha = alpha.max(tt_score),
-                TranspositionFlag::UpperBound => beta = beta.min(tt_score),
-            }
-
-            // If the bound update causes a cutoff, skip searching this node.
-            if alpha >= beta {
-                self.analytics.transposition_table_cuts += 1;
-                return Some((entry.best_move, tt_score));
             }
         }
 
@@ -739,7 +746,7 @@ mod tests {
     fn test_search_mate_in_three() {
         let state = GameState::from_fen("4k1r1/R6p/4Nb2/4n3/6Pq/2P4P/3Q3K/5R2 w - - 2 2").unwrap();
         let best_moves_expected = ["d2d8", "f6d8", "f1f8", "g8f8", "e6g7"];
-        assert_best_move_sequence(state, &best_moves_expected, 5);
+        assert_best_move_sequence(state, &best_moves_expected, 7);
     }
 
     #[test]
@@ -748,7 +755,7 @@ mod tests {
             GameState::from_fen("3qr2k/1p3rbp/2p3p1/p7/P2pBNn1/1P3n2/6P1/B1Q1RR1K b - - 1 30")
                 .unwrap();
         let best_moves_expected = ["d8h4", "f4h3", "h4g3", "c1f4", "f7f4", "-", "g3h2"];
-        assert_best_move_sequence(state, &best_moves_expected, 7);
+        assert_best_move_sequence(state, &best_moves_expected, 8);
     }
 
     #[test]
@@ -766,7 +773,7 @@ mod tests {
         let mut state =
             GameState::from_fen("4k1r1/R6p/4Nb2/4n3/6Pq/2P4P/3Q3K/5R2 w - - 2 2").unwrap();
         let mut searcher = Searcher::new();
-        let result = searcher.search(&mut state, 5, None::<fn(SearchResult)>);
+        let result = searcher.search(&mut state, 7, None::<fn(SearchResult)>);
         let best_moves: Vec<Move> = result.pv.iter().copied().collect();
         assert_move_sequence(&best_moves, &["d2d8", "f6d8", "f1f8", "g8f8", "e6g7"]);
     }
@@ -777,7 +784,7 @@ mod tests {
             GameState::from_fen("3qr2k/1p3rbp/2p3p1/p7/P2pBNn1/1P3n2/6P1/B1Q1RR1K b - - 1 30")
                 .unwrap();
         let mut searcher = Searcher::new();
-        let result = searcher.search(&mut state, 7, None::<fn(SearchResult)>);
+        let result = searcher.search(&mut state, 8, None::<fn(SearchResult)>);
         let best_moves: Vec<Move> = result.pv.iter().copied().collect();
         let best_moves_expected = ["d8h4", "f4h3", "h4g3", "c1f4", "f7f4", "-", "g3h2"];
         assert_move_sequence(&best_moves, &best_moves_expected);

@@ -12,6 +12,7 @@ use crate::stack_vec::StackVec;
 use crate::state::GameState;
 use crate::time_control::TimeControl;
 use crate::transposition_table::{TranspositionEntry, TranspositionFlag, TranspositionTable};
+use crate::uci::options::EngineOptions;
 use crate::zobrist::ZobristHash;
 
 #[derive(Debug, Clone, Copy)]
@@ -52,16 +53,37 @@ const QUIESCENCE_NODE_CHECK_INTERVAL: u64 = 128;
 
 impl Searcher {
     pub fn new() -> Self {
-        let time_control = TimeControl::new();
+        Self::with_options(EngineOptions::default())
+    }
 
+    /// Builds a [`Searcher`] whose transposition table and time control
+    /// reflect `options`. Per-search state reset on every
+    /// [`search`](Self::search) call.
+    pub fn with_options(options: EngineOptions) -> Self {
         Searcher {
             position_history: Box::new(ZobristHashList::default()),
             move_scorer: MoveScorer::new(),
             pv: PvTable::new(),
-            transposition_table: TranspositionTable::new(),
+            transposition_table: TranspositionTable::with_size_mb(options.hash_mb),
             analytics: SearchAnalytics::default(),
-            time_control,
+            time_control: TimeControl::with_overhead(options.move_overhead),
         }
+    }
+
+    /// Replaces the transposition table with one sized to `mb` mebibytes,
+    /// discarding existing entries.
+    pub fn resize_tt(&mut self, mb: usize) {
+        self.transposition_table.resize(mb);
+    }
+
+    /// Updates the time-control safety buffer.
+    pub fn set_move_overhead(&mut self, overhead: Duration) {
+        self.time_control.set_move_overhead(overhead);
+    }
+
+    /// Clears the transposition table without reallocating.
+    pub fn clear_tt(&mut self) {
+        self.transposition_table.clear();
     }
 
     /// Snapshot the root PV into a `PvList` for reporting. After the
@@ -207,8 +229,11 @@ impl Searcher {
                 })
             }
 
-            // We ran out of time, so stop searching deeper
-            if self.time_control.is_time_up() {
+            // Soft cutoff: refuse to start the next iteration once we
+            // cross the soft deadline. The next iteration would almost
+            // certainly abort against the hard deadline and produce no
+            // usable result, so its CPU spend is pure waste.
+            if self.time_control.is_soft_time_up() {
                 break;
             }
         }
@@ -263,7 +288,7 @@ impl Searcher {
             .analytics
             .nodes_searched
             .is_multiple_of(NODE_CHECK_INTERVAL)
-            && self.time_control.is_time_up()
+            && self.time_control.is_hard_time_up()
         {
             return None;
         }
@@ -551,7 +576,7 @@ impl Searcher {
             .analytics
             .quiescence_nodes_searched
             .is_multiple_of(QUIESCENCE_NODE_CHECK_INTERVAL)
-            && self.time_control.is_time_up()
+            && self.time_control.is_hard_time_up()
         {
             return None;
         }

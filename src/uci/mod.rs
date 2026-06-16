@@ -11,6 +11,7 @@
 //! read/dispatch loop until the GUI sends `quit` (or stdin closes).
 
 pub mod adapter;
+pub mod options;
 pub mod parser;
 
 use once_cell::sync::Lazy;

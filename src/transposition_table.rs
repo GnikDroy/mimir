@@ -47,34 +47,43 @@ pub struct TranspositionTable {
 }
 
 impl TranspositionTable {
-    /// Creates a table with the default capacity (~32 MiB worth of entries,
-    /// rounded up to the next power of two).
+    /// Creates a table sized to roughly 32 MiB of entries.
     pub fn new() -> Self {
-        const MEGABYTE: usize = 1024 * 1024;
-        const SIZE_IN_MB: usize = 32 * MEGABYTE;
-        const ENTRY_SIZE: usize = std::mem::size_of::<TranspositionEntry>();
-        const DEFAULT_TABLE_SIZE: usize = (SIZE_IN_MB / ENTRY_SIZE).next_power_of_two();
-        Self::with_capacity(DEFAULT_TABLE_SIZE)
+        Self::with_size_mb(32)
     }
 
-    /// Creates a table with the given number of slots.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `capacity` is not a power of two; the indexing scheme relies
-    /// on a bitmask of `capacity - 1`.
+    /// Creates a table whose entry array fits in exactly `size_mb`
+    /// mebibytes (rounded down to whole entries).
+    pub fn with_size_mb(size_mb: usize) -> Self {
+        const MEGABYTE: usize = 1024 * 1024;
+        const ENTRY_SIZE: usize = std::mem::size_of::<TranspositionEntry>();
+
+        let entries = size_mb.saturating_mul(MEGABYTE) / ENTRY_SIZE.max(1);
+        Self::with_capacity(entries.max(2))
+    }
+
+    /// Reallocates the table for `size_mb` mebibytes, discarding all
+    /// existing entries.
+    pub fn resize(&mut self, size_mb: usize) {
+        *self = Self::with_size_mb(size_mb);
+    }
+
+    /// Creates a table with the given number of slots. `capacity` may be
+    /// any positive value; the indexing scheme uses a multiplication-based
+    /// map and does not require a power of two.
     pub fn with_capacity(capacity: usize) -> Self {
-        assert!(capacity.is_power_of_two());
+        assert!(capacity > 0);
 
         TranspositionTable {
             entries: vec![None; capacity],
         }
     }
 
-    /// Maps a Zobrist key to a slot index via the low `log2(capacity)` bits.
+    /// Maps a 64-bit Zobrist key to a slot index in `[0, capacity)` via
+    /// the high 64 bits of the 128-bit product `key * capacity`.
     #[inline(always)]
     fn index(&self, key: u64) -> usize {
-        (key as usize) & (self.entries.len() - 1)
+        ((key as u128 * self.entries.len() as u128) >> 64) as usize
     }
 
     /// Empties every slot. Call between independent searches (e.g.

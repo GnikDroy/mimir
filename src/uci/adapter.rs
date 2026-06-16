@@ -24,6 +24,7 @@ use crate::nnue::evaluate;
 use crate::search::{SearchResult, Searcher, MAX_PLY};
 use crate::state::GameState;
 
+use super::options::EngineOptions;
 use super::parser::{GoCommand, UCICommand};
 
 /// Engine-side UCI runtime: position, generation counter, and writer.
@@ -34,6 +35,8 @@ use super::parser::{GoCommand, UCICommand};
 /// check whether their results are still relevant before printing.
 pub struct UCIAdapter {
     state: GameState,
+    options: EngineOptions,
+    searcher: Arc<Mutex<Searcher>>,
     search_generation: Arc<AtomicU64>,
     out: Arc<Mutex<Box<dyn std::io::Write + Send>>>,
 }
@@ -48,19 +51,18 @@ impl UCIAdapter {
     /// Creates an adapter at the standard start position, writing UCI
     /// output to stdout.
     pub fn new() -> Self {
-        Self {
-            state: GameState::new(),
-            search_generation: Arc::new(AtomicU64::new(0)),
-            out: Arc::new(Mutex::new(Box::new(std::io::stdout()))),
-        }
+        Self::with_writer(Box::new(std::io::stdout()))
     }
 
     /// Like [`new`](Self::new), but routes all UCI output to `writer`
     /// instead of stdout. Used by tests to capture and assert on the
     /// emitted protocol.
     pub fn with_writer(writer: Box<dyn std::io::Write + Send>) -> Self {
+        let options = EngineOptions::default();
         Self {
             state: GameState::new(),
+            options,
+            searcher: Arc::new(Mutex::new(Searcher::with_options(options))),
             search_generation: Arc::new(AtomicU64::new(0)),
             out: Arc::new(Mutex::new(writer)),
         }
@@ -134,8 +136,9 @@ impl UCIAdapter {
         match command {
             UCICommand::Uci => {
                 let mut out = self.out.lock().unwrap();
-                writeln!(out, "id name chess_engine").ok();
+                writeln!(out, "id name mimir").ok();
                 writeln!(out, "id author gnikdroy").ok();
+                EngineOptions::write_uci_advertisements(&mut *out).ok();
                 writeln!(out, "uciok").ok();
             }
             UCICommand::IsReady => {
@@ -145,6 +148,7 @@ impl UCIAdapter {
             UCICommand::UciNewGame => {
                 self.state = GameState::new();
                 self.next_generation();
+                self.searcher.lock().unwrap().clear_tt();
             }
             UCICommand::Position { fen, moves } => {
                 self.next_generation();
@@ -157,7 +161,9 @@ impl UCIAdapter {
                 self.next_generation();
             }
             UCICommand::PonderHit => {}
-            UCICommand::SetOption { .. } => {}
+            UCICommand::SetOption { name, value } => {
+                self.handle_setoption(&name, value.as_deref());
+            }
             UCICommand::Quit => {
                 self.next_generation();
                 return false;
@@ -269,6 +275,21 @@ impl UCIAdapter {
         }
     }
 
+    /// Applies a `setoption` update to [`self.options`] and propagates
+    /// recognized changes to the live [`Searcher`]. Unknown names and
+    /// out-of-range values are silently ignored per the UCI spec.
+    fn handle_setoption(&mut self, name: &str, value: Option<&str>) {
+        if !self.options.set(name, value) {
+            return;
+        }
+        let mut searcher = self.searcher.lock().unwrap();
+        match name.trim().to_ascii_lowercase().as_str() {
+            "hash" => searcher.resize_tt(self.options.hash_mb),
+            "move overhead" => searcher.set_move_overhead(self.options.move_overhead),
+            _ => {}
+        }
+    }
+
     /// Spawns a search worker for `go` and returns immediately.
     ///
     /// The worker captures the bumped generation token at launch and
@@ -281,10 +302,11 @@ impl UCIAdapter {
         let generation = self.next_generation();
         let generation_token = Arc::clone(&self.search_generation);
         let out = Arc::clone(&self.out);
+        let searcher = Arc::clone(&self.searcher);
         let mut state = self.state;
 
         thread::spawn(move || {
-            let mut searcher = Searcher::new();
+            let mut searcher = searcher.lock().unwrap();
 
             let depth = if go.infinite {
                 MAX_PLY as u8
@@ -375,7 +397,7 @@ mod tests {
 
         let guard = output.lock().unwrap();
         let output_str = String::from_utf8_lossy(&guard);
-        assert!(output_str.contains("id name chess_engine"));
+        assert!(output_str.contains("id name mimir"));
         assert!(output_str.contains("id author gnikdroy"));
         assert!(output_str.contains("uciok"));
     }
@@ -569,7 +591,7 @@ mod tests {
 
         let guard = output.lock().unwrap();
         let output_str = String::from_utf8_lossy(&guard);
-        assert!(output_str.contains("id name chess_engine"));
+        assert!(output_str.contains("id name mimir"));
         assert!(output_str.contains("id author gnikdroy"));
         assert!(output_str.contains("uciok"));
         assert!(output_str.contains("readyok"));

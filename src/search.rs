@@ -1,3 +1,5 @@
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use crate::analytics::SearchAnalytics;
@@ -8,6 +10,7 @@ use crate::move_scorer::MoveScorer;
 use crate::nnue::evaluate;
 use crate::pv_table::PvTable;
 use crate::score;
+use crate::search_status::SearchStatus;
 use crate::stack_vec::StackVec;
 use crate::state::GameState;
 use crate::time_control::TimeControl;
@@ -43,6 +46,12 @@ pub struct Searcher {
     analytics: SearchAnalytics,
     move_scorer: MoveScorer,
     pv: PvTable<MAX_PLY>,
+    /// External abort signal supplied by the caller at construction.
+    /// The Searcher only reads it; the owner (e.g. the UCI adapter)
+    /// flips it from another thread to interrupt the in-flight search.
+    /// [`Searcher::default`] install a never-flipped
+    /// default for callers that don't need external abort.
+    stop: Arc<AtomicBool>,
 }
 
 pub const MAX_PLY: usize = 64;
@@ -52,14 +61,11 @@ const NODE_CHECK_INTERVAL: u64 = 256;
 const QUIESCENCE_NODE_CHECK_INTERVAL: u64 = 128;
 
 impl Searcher {
-    pub fn new() -> Self {
-        Self::with_options(EngineOptions::default())
-    }
-
-    /// Builds a [`Searcher`] whose transposition table and time control
-    /// reflect `options`. Per-search state reset on every
-    /// [`search`](Self::search) call.
-    pub fn with_options(options: EngineOptions) -> Self {
+    /// Builds a [`Searcher`] that consults `stop` between node-interval
+    /// checks. The caller owns the flag; the Searcher only reads it.
+    /// Flipping `stop` to `true` from another thread asks the in-flight
+    /// search to return [`SearchStatus::Stopped`] at the next check.
+    pub fn new(options: EngineOptions, stop: Arc<AtomicBool>) -> Self {
         Searcher {
             position_history: Box::new(ZobristHashList::default()),
             move_scorer: MoveScorer::new(),
@@ -67,6 +73,7 @@ impl Searcher {
             transposition_table: TranspositionTable::with_size_mb(options.hash_mb),
             analytics: SearchAnalytics::default(),
             time_control: TimeControl::with_overhead(options.move_overhead),
+            stop,
         }
     }
 
@@ -207,16 +214,18 @@ impl Searcher {
 
         self.time_control.set_search_deadline(state.side_to_move);
         for depth in 1..=max_depth {
-            match self.alpha_beta(state, depth, 0, i32::MIN / 2, i32::MAX / 2, true) {
-                Some((_, eval)) => {
+            let status = self.alpha_beta(state, depth, 0, i32::MIN / 2, i32::MAX / 2, true);
+            let aborted = !matches!(status, SearchStatus::Complete(_));
+            match status {
+                SearchStatus::Complete((_, eval)) => {
                     best_eval = eval;
                     pv = self.root_pv(state);
                     self.analytics.depth = depth;
                 }
-                None => {
+                SearchStatus::Stopped | SearchStatus::TimedOut => {
                     self.analytics.depth = depth - 1;
                 }
-            };
+            }
 
             // report info after each completed depth, if a reporting function is provided
             self.analytics.elapsed = self.time_control.get_elapsed();
@@ -227,6 +236,13 @@ impl Searcher {
                     analytics: self.analytics,
                     pv,
                 })
+            }
+
+            // Bail on abort: a Stopped/TimedOut search can't produce a
+            // usable deeper result, and without a soft deadline (e.g.
+            // `go infinite`) the loop below wouldn't otherwise terminate.
+            if aborted {
+                break;
             }
 
             // Soft cutoff: refuse to start the next iteration once we
@@ -254,7 +270,7 @@ impl Searcher {
         mut alpha: i32,
         mut beta: i32,
         do_null: bool,
-    ) -> Option<(Option<Move>, i32)> {
+    ) -> SearchStatus<(Option<Move>, i32)> {
         // Reset this ply's PV. Early returns (draw, depth==0, TT cutoff) will
         // leave it empty; the parent then sees an empty child PV and truncates.
         self.pv.clear_ply(ply);
@@ -267,7 +283,7 @@ impl Searcher {
             && (state.halfmove_clock >= 100
                 || self.is_repetition(state.zobrist_hash, state.halfmove_clock))
         {
-            return Some((None, 0));
+            return SearchStatus::Complete((None, 0));
         }
 
         // Check extension: spend one extra ply when the side to move is in check.
@@ -283,14 +299,19 @@ impl Searcher {
 
         self.analytics.nodes_searched += 1;
 
-        // Timeout check
+        // Abort check: external stop signal takes precedence over time-up
+        // so we report the cause faithfully.
         if self
             .analytics
             .nodes_searched
             .is_multiple_of(NODE_CHECK_INTERVAL)
-            && self.time_control.is_hard_time_up()
         {
-            return None;
+            if self.stop.load(Ordering::Relaxed) {
+                return SearchStatus::Stopped;
+            }
+            if self.time_control.is_hard_time_up() {
+                return SearchStatus::TimedOut;
+            }
         }
 
         // We store these so that we can store in the transposition table later.
@@ -317,7 +338,7 @@ impl Searcher {
                 match entry.flag {
                     TranspositionFlag::Exact => {
                         self.analytics.transposition_table_cuts += 1;
-                        return Some((entry.best_move, tt_score));
+                        return SearchStatus::Complete((entry.best_move, tt_score));
                     }
                     TranspositionFlag::LowerBound => alpha = alpha.max(tt_score),
                     TranspositionFlag::UpperBound => beta = beta.min(tt_score),
@@ -326,7 +347,7 @@ impl Searcher {
                 // If the bound update causes a cutoff, skip searching this node.
                 if alpha >= beta {
                     self.analytics.transposition_table_cuts += 1;
-                    return Some((entry.best_move, tt_score));
+                    return SearchStatus::Complete((entry.best_move, tt_score));
                 }
             }
         }
@@ -334,7 +355,11 @@ impl Searcher {
         // Static eval feeds the NMP eval guard below. Skip when in check:
         // NMP refuses to fire there, and the eval is meaningless while the
         // king is under attack.
-        let static_eval = if !in_check { Some(evaluate(state)) } else { None };
+        let static_eval = if !in_check {
+            Some(evaluate(state))
+        } else {
+            None
+        };
 
         // Null move pruning: pass the turn and search at reduced depth with
         // a null window around beta. If the opponent still can't beat us
@@ -366,7 +391,7 @@ impl Searcher {
         {
             self.analytics.null_move_attempts += 1;
             let undo = state.make_null_move();
-            let null_score = self
+            let null_status = self
                 .alpha_beta(
                     state,
                     depth - 1 - NMP_REDUCTION,
@@ -377,7 +402,7 @@ impl Searcher {
                 )
                 .map(|(_, e)| -e);
             state.unmake_null_move(&undo);
-            let null_score = null_score?;
+            let null_score = null_status?;
 
             if null_score >= beta {
                 self.analytics.null_move_cutoffs += 1;
@@ -388,7 +413,7 @@ impl Searcher {
                 } else {
                     null_score
                 };
-                return Some((None, clamped));
+                return SearchStatus::Complete((None, clamped));
             }
         }
 
@@ -572,7 +597,7 @@ impl Searcher {
             best_move,
         });
 
-        Some((best_move, best_eval))
+        SearchStatus::Complete((best_move, best_eval))
     }
 
     /// Quiescence search: search captures until a quiet position is reached
@@ -582,18 +607,23 @@ impl Searcher {
         ply: usize,
         mut alpha: i32,
         beta: i32,
-    ) -> Option<i32> {
+    ) -> SearchStatus<i32> {
         self.analytics.max_ply_reached = self.analytics.max_ply_reached.max(ply as u8);
         self.analytics.quiescence_nodes_searched += 1;
 
-        // Timeout check
+        // Abort check: external stop signal takes precedence over time-up
+        // so we report the cause faithfully.
         if self
             .analytics
             .quiescence_nodes_searched
             .is_multiple_of(QUIESCENCE_NODE_CHECK_INTERVAL)
-            && self.time_control.is_hard_time_up()
         {
-            return None;
+            if self.stop.load(Ordering::Relaxed) {
+                return SearchStatus::Stopped;
+            }
+            if self.time_control.is_hard_time_up() {
+                return SearchStatus::TimedOut;
+            }
         }
 
         // Draw detection (50-move rule and repetition) — cheap and
@@ -603,7 +633,7 @@ impl Searcher {
         if state.halfmove_clock >= 100
             || self.is_repetition(state.zobrist_hash, state.halfmove_clock)
         {
-            return Some(0);
+            return SearchStatus::Complete(0);
         }
 
         // Generate moves so we can detect checkmate/stalemate before any
@@ -612,9 +642,9 @@ impl Searcher {
         state.generate_moves(buf.moves_mut());
         if buf.is_empty() {
             if state.is_in_check(state.side_to_move) {
-                return Some(score::mated(ply));
+                return SearchStatus::Complete(score::mated(ply));
             } else {
-                return Some(0);
+                return SearchStatus::Complete(0);
             }
         }
 
@@ -631,7 +661,7 @@ impl Searcher {
             let stand_pat = evaluate(state);
             if stand_pat >= beta {
                 self.analytics.quiescence_stand_pat_cutoffs += 1;
-                return Some(beta);
+                return SearchStatus::Complete(beta);
             }
             alpha = alpha.max(stand_pat);
         }
@@ -642,10 +672,10 @@ impl Searcher {
         for mv in buf.ordered() {
             self.position_history.push(state.zobrist_hash);
             let undo = state.make_move(mv);
-            let eval = self.quiescence(state, ply + 1, -beta, -alpha).map(|e| -e);
+            let status = self.quiescence(state, ply + 1, -beta, -alpha).map(|e| -e);
             state.unmake_move(mv, &undo);
             self.position_history.pop();
-            let eval = eval?;
+            let eval = status?;
 
             // update alpha.
             // alpha-beta on negamax, unlike minimax doesn't require updating beta.
@@ -662,13 +692,13 @@ impl Searcher {
         // which may exceed the original alpha bound.
         // A fail-hard implementation would instead return beta
         // immediately on cutoff.
-        Some(alpha)
+        SearchStatus::Complete(alpha)
     }
 }
 
 impl Default for Searcher {
     fn default() -> Self {
-        Self::new()
+        Self::new(EngineOptions::default(), Arc::new(AtomicBool::new(false)))
     }
 }
 
@@ -681,7 +711,7 @@ mod tests {
         search_depth: u8,
         max_moves: usize,
     ) -> Vec<Move> {
-        let mut searcher = Searcher::new();
+        let mut searcher = Searcher::default();
         let mut history = vec![];
 
         for _ in 0..max_moves {
@@ -762,7 +792,7 @@ mod tests {
     fn test_search_returns_full_pv_for_mate_in_two() {
         let mut state =
             GameState::from_fen("5rk1/5ppp/2p5/1p6/1Q1p1P2/2Pq4/bP2R2P/rNK1R3 w - - 0 24").unwrap();
-        let mut searcher = Searcher::new();
+        let mut searcher = Searcher::default();
         let result = searcher.search(&mut state, 4, None::<fn(SearchResult)>);
         let best_moves: Vec<Move> = result.pv.iter().copied().collect();
         assert_move_sequence(&best_moves, &["b4f8", "g8f8", "e2e8"]);
@@ -772,7 +802,7 @@ mod tests {
     fn test_search_returns_full_pv_for_mate_in_three() {
         let mut state =
             GameState::from_fen("4k1r1/R6p/4Nb2/4n3/6Pq/2P4P/3Q3K/5R2 w - - 2 2").unwrap();
-        let mut searcher = Searcher::new();
+        let mut searcher = Searcher::default();
         let result = searcher.search(&mut state, 7, None::<fn(SearchResult)>);
         let best_moves: Vec<Move> = result.pv.iter().copied().collect();
         assert_move_sequence(&best_moves, &["d2d8", "f6d8", "f1f8", "g8f8", "e6g7"]);
@@ -783,7 +813,7 @@ mod tests {
         let mut state =
             GameState::from_fen("3qr2k/1p3rbp/2p3p1/p7/P2pBNn1/1P3n2/6P1/B1Q1RR1K b - - 1 30")
                 .unwrap();
-        let mut searcher = Searcher::new();
+        let mut searcher = Searcher::default();
         let result = searcher.search(&mut state, 8, None::<fn(SearchResult)>);
         let best_moves: Vec<Move> = result.pv.iter().copied().collect();
         let best_moves_expected = ["d8h4", "f4h3", "h4g3", "c1f4", "f7f4", "-", "g3h2"];
@@ -810,7 +840,7 @@ mod tests {
         // Mirror knight moves out and back: position after 4 plies equals start.
         let mut state = GameState::new();
         let history = play_moves(&mut state, &["b1c3", "b8c6", "c3b1", "c6b8"]);
-        let mut searcher = Searcher::new();
+        let mut searcher = Searcher::default();
         searcher.position_history = history;
         assert!(searcher.is_repetition(state.zobrist_hash, state.halfmove_clock));
     }
@@ -820,7 +850,7 @@ mod tests {
         // Four distinct development moves: current position is novel.
         let mut state = GameState::new();
         let history = play_moves(&mut state, &["e2e4", "e7e5", "g1f3", "g8f6"]);
-        let mut searcher = Searcher::new();
+        let mut searcher = Searcher::default();
         searcher.position_history = history;
         assert!(!searcher.is_repetition(state.zobrist_hash, 100));
     }
@@ -830,7 +860,7 @@ mod tests {
         // Less than 4 entries: a 4-ply cycle is impossible.
         let mut state = GameState::new();
         let history = play_moves(&mut state, &["b1c3", "b8c6", "c3b1"]);
-        let mut searcher = Searcher::new();
+        let mut searcher = Searcher::default();
         searcher.position_history = history;
         assert!(!searcher.is_repetition(state.zobrist_hash, 100));
     }
@@ -840,7 +870,7 @@ mod tests {
         // A real 4-ply cycle is present, but halfmove_clock < 4 short-circuits.
         let mut state = GameState::new();
         let history = play_moves(&mut state, &["b1c3", "b8c6", "c3b1", "c6b8"]);
-        let mut searcher = Searcher::new();
+        let mut searcher = Searcher::default();
         searcher.position_history = history;
         assert!(!searcher.is_repetition(state.zobrist_hash, 3));
     }
@@ -856,7 +886,7 @@ mod tests {
                 "b1c3", "b8c6", "g1f3", "g8f6", "c3b1", "c6b8", "f3g1", "f6g8",
             ],
         );
-        let mut searcher = Searcher::new();
+        let mut searcher = Searcher::default();
         searcher.position_history = history;
         // halfmove_clock=4 only looks back 4 plies, missing the 8-ply match.
         assert!(!searcher.is_repetition(state.zobrist_hash, 4));
@@ -874,7 +904,7 @@ mod tests {
             &mut state,
             &["e1d1", "e8d8", "d1e2", "d8e7", "e2e1", "e7e8"],
         );
-        let mut searcher = Searcher::new();
+        let mut searcher = Searcher::default();
         searcher.position_history = history;
         assert!(searcher.is_repetition(state.zobrist_hash, state.halfmove_clock));
     }
@@ -886,7 +916,7 @@ mod tests {
         // to 100. At depth >= 1, every child node hits the 50-move draw check
         // and returns 0, which propagates back to the root.
         let mut state = GameState::from_fen("4k3/8/8/8/8/8/8/R3K3 w - - 99 50").unwrap();
-        let mut searcher = Searcher::new();
+        let mut searcher = Searcher::default();
         let result = searcher.search(&mut state, 3, None::<fn(SearchResult)>);
         assert_eq!(result.evaluation, 0);
     }
@@ -897,7 +927,7 @@ mod tests {
         // perpetual starting with a bishop sacrifice:
         let mut state =
             GameState::from_fen("1krqr3/p1p2n2/2Q3b1/p3n3/1b6/8/4BB2/5K2 w - - 0 1").unwrap();
-        let mut searcher = Searcher::new();
+        let mut searcher = Searcher::default();
         let result = searcher.search(&mut state, 9, None::<fn(SearchResult)>);
         assert_eq!(result.evaluation, 0);
         assert_eq!(
@@ -912,7 +942,7 @@ mod tests {
         // covers g8/g7/h7, white king on f6 covers g5/g6/g7. Black king on h8
         // has no escape and is not attacked.
         let mut state = GameState::from_fen("7k/5Q2/5K2/8/8/8/8/8 b - - 0 1").unwrap();
-        let mut searcher = Searcher::new();
+        let mut searcher = Searcher::default();
         let result = searcher.search(&mut state, 1, None::<fn(SearchResult)>);
         assert_eq!(result.evaluation, 0);
     }

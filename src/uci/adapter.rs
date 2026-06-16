@@ -13,7 +13,7 @@
 //! captured at launch. Stale workers finish their work silently.
 
 use std::sync::{
-    atomic::{AtomicU64, Ordering},
+    atomic::{AtomicBool, AtomicU64, Ordering},
     Arc, Mutex,
 };
 use std::thread;
@@ -38,6 +38,8 @@ pub struct UCIAdapter {
     options: EngineOptions,
     searcher: Arc<Mutex<Searcher>>,
     search_generation: Arc<AtomicU64>,
+    /// Shared abort flag
+    stop_flag: Arc<AtomicBool>,
     out: Arc<Mutex<Box<dyn std::io::Write + Send>>>,
 }
 
@@ -59,11 +61,14 @@ impl UCIAdapter {
     /// emitted protocol.
     pub fn with_writer(writer: Box<dyn std::io::Write + Send>) -> Self {
         let options = EngineOptions::default();
+        let stop_flag = Arc::new(AtomicBool::new(false));
+        let searcher = Searcher::new(options, Arc::clone(&stop_flag));
         Self {
             state: GameState::new(),
             options,
-            searcher: Arc::new(Mutex::new(Searcher::with_options(options))),
+            searcher: Arc::new(Mutex::new(searcher)),
             search_generation: Arc::new(AtomicU64::new(0)),
+            stop_flag,
             out: Arc::new(Mutex::new(writer)),
         }
     }
@@ -73,6 +78,14 @@ impl UCIAdapter {
     /// the bump and skip emitting `bestmove` / late `info` lines.
     fn next_generation(&self) -> u64 {
         self.search_generation.fetch_add(1, Ordering::SeqCst) + 1
+    }
+
+    /// Cancel any in-flight search: bump the generation (so its eventual
+    /// `bestmove` is suppressed) and raise the stop flag (so it exits
+    /// promptly rather than burning its full time budget).
+    fn abort_search(&self) {
+        self.next_generation();
+        self.stop_flag.store(true, Ordering::SeqCst);
     }
 
     /// Formats a [`SearchResult`] as a single UCI `info` line and
@@ -127,9 +140,15 @@ impl UCIAdapter {
     /// Dispatches one parsed UCI command and returns `true` if the
     /// runtime loop should keep going, or `false` on `quit`.
     ///
-    /// Commands that invalidate any in-flight search
-    /// (`stop`, `position`, `ucinewgame`, `quit`) bump the generation
-    /// counter so the worker's eventual output is discarded.
+    /// `position`, `ucinewgame`, and `quit` bump the generation counter so
+    /// any in-flight worker's eventual output is discarded (the position
+    /// it searched is no longer current). They also raise the stop flag
+    /// so the worker exits promptly instead of running to time-up.
+    ///
+    /// `stop` only raises the stop flag — it does NOT bump the generation,
+    /// because the UCI spec requires a `bestmove` for every `go`. The
+    /// worker emits its best move so far, then the GUI is unstuck.
+    ///
     /// `go` spawns a search on a worker thread and returns immediately.
     /// `setoption`, `ponderhit`, and `Unknown` are accepted but ignored.
     pub fn handle_command(&mut self, command: UCICommand) -> bool {
@@ -147,25 +166,27 @@ impl UCIAdapter {
             }
             UCICommand::UciNewGame => {
                 self.state = GameState::new();
-                self.next_generation();
+                self.abort_search();
                 self.searcher.lock().unwrap().clear_tt();
             }
             UCICommand::Position { fen, moves } => {
-                self.next_generation();
+                self.abort_search();
                 self.apply_position(fen, moves);
             }
             UCICommand::Go(go) => {
                 self.launch_search(go);
             }
             UCICommand::Stop => {
-                self.next_generation();
+                // Raise the abort flag but keep the generation so the
+                // worker's `bestmove` is still emitted — required by spec.
+                self.stop_flag.store(true, Ordering::SeqCst);
             }
             UCICommand::PonderHit => {}
             UCICommand::SetOption { name, value } => {
                 self.handle_setoption(&name, value.as_deref());
             }
             UCICommand::Quit => {
-                self.next_generation();
+                self.abort_search();
                 return false;
             }
             UCICommand::Display => {
@@ -296,10 +317,16 @@ impl UCIAdapter {
     /// only emits `bestmove` if the counter still matches when the
     /// search finishes; `info` callbacks always print (interleaving is
     /// prevented by the shared writer mutex). `go infinite` is mapped
-    /// to a fixed depth of 32 since the engine relies on the time
-    /// control / `stop` command to terminate iterative deepening.
+    /// to a fixed depth of `MAX_PLY` since the engine relies on the
+    /// time control / `stop` command to terminate iterative deepening.
+    ///
+    /// The stop flag is cleared synchronously here, before the worker
+    /// is spawned, so a leftover `true` from a prior search can't make
+    /// the new one abort immediately. Any `stop` arriving after this
+    /// point races correctly with the worker via the atomic.
     fn launch_search(&mut self, go: GoCommand) {
         let generation = self.next_generation();
+        self.stop_flag.store(false, Ordering::SeqCst);
         let generation_token = Arc::clone(&self.search_generation);
         let out = Arc::clone(&self.out);
         let searcher = Arc::clone(&self.searcher);
@@ -595,6 +622,100 @@ mod tests {
         assert!(output_str.contains("id author gnikdroy"));
         assert!(output_str.contains("uciok"));
         assert!(output_str.contains("readyok"));
+    }
+
+    /// Poll `output` until it contains `needle` or the timeout elapses.
+    /// Returns whether the substring was observed in time.
+    fn wait_for(output: &Arc<Mutex<Vec<u8>>>, needle: &str, timeout: std::time::Duration) -> bool {
+        let start = std::time::Instant::now();
+        while start.elapsed() < timeout {
+            {
+                let guard = output.lock().unwrap();
+                if String::from_utf8_lossy(&guard).contains(needle) {
+                    return true;
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        false
+    }
+
+    /// `go infinite` + `stop` must emit `bestmove` per UCI spec.
+    /// Regression guard for the previous behavior where `stop` bumped
+    /// the generation, silently swallowing the bestmove and stranding
+    /// the GUI.
+    #[test]
+    fn test_stop_during_go_infinite_emits_bestmove() {
+        let (writer, output) = SharedBuffer::new();
+        let mut adapter = UCIAdapter::with_writer(Box::new(writer));
+
+        adapter.handle_command(UCICommand::Position {
+            fen: None,
+            moves: vec![],
+        });
+        adapter.handle_command(UCICommand::Go(GoCommand {
+            depth: None,
+            movetime: None,
+            wtime: None,
+            btime: None,
+            winc: None,
+            binc: None,
+            movestogo: None,
+            infinite: true,
+        }));
+
+        // Let the worker start searching before we interrupt; otherwise we'd
+        // race against `launch_search` clearing the stop flag.
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        adapter.handle_command(UCICommand::Stop);
+
+        assert!(
+            wait_for(&output, "bestmove", std::time::Duration::from_secs(1)),
+            "expected `bestmove` after stop, got: {}",
+            String::from_utf8_lossy(&output.lock().unwrap()),
+        );
+    }
+
+    /// `position` arriving mid-search should silently cancel the stale
+    /// worker — its bestmove would refer to the prior position and must
+    /// not be emitted.
+    #[test]
+    fn test_position_mid_search_suppresses_stale_bestmove() {
+        let (writer, output) = SharedBuffer::new();
+        let mut adapter = UCIAdapter::with_writer(Box::new(writer));
+
+        adapter.handle_command(UCICommand::Position {
+            fen: None,
+            moves: vec![],
+        });
+        adapter.handle_command(UCICommand::Go(GoCommand {
+            depth: None,
+            movetime: None,
+            wtime: None,
+            btime: None,
+            winc: None,
+            binc: None,
+            movestogo: None,
+            infinite: true,
+        }));
+
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        adapter.handle_command(UCICommand::Position {
+            fen: None,
+            moves: vec!["e2e4".to_string()],
+        });
+
+        // Give the now-cancelled worker time to wind down. The lock on
+        // the searcher mutex below blocks until the worker releases it,
+        // which guarantees the bestmove decision has already been made.
+        let _guard = adapter.searcher.lock().unwrap();
+        let guard = output.lock().unwrap();
+        let output_str = String::from_utf8_lossy(&guard);
+        assert!(
+            !output_str.contains("bestmove"),
+            "stale bestmove leaked through generation gate: {}",
+            output_str,
+        );
     }
 
     #[test]

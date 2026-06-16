@@ -1,4 +1,6 @@
 #![feature(variant_count)]
+#![feature(try_trait_v2)]
+#![feature(try_trait_v2_residual)]
 
 extern crate num_enum;
 
@@ -26,6 +28,7 @@ pub mod null_move;
 pub mod pv_table;
 pub mod score;
 pub mod search;
+pub mod search_status;
 pub mod stack_vec;
 pub mod time_control;
 pub mod transposition_table;

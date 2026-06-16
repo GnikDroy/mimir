@@ -374,7 +374,7 @@ mod tests {
             "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1",
         )
         .unwrap();
-        let mut searcher = Searcher::new();
+        let mut searcher = Searcher::default();
         let result = searcher.search(&mut state, 14, None::<fn(SearchResult)>);
         println!("Game: {}", state);
         result.analytics.print();
@@ -385,7 +385,7 @@ mod tests {
     #[ignore]
     fn analytics_search_startpos() {
         let mut state = GameState::new();
-        let mut searcher = Searcher::new();
+        let mut searcher = Searcher::default();
         let result = searcher.search(&mut state, 14, None::<fn(SearchResult)>);
         result.analytics.print();
     }
@@ -399,7 +399,7 @@ mod tests {
             "rnb1kb1r/1p3ppp/pq1ppn2/6B1/3NPP2/2N5/PPP3PP/R2QKB1R w KQkq - 1 8",
         )
         .unwrap();
-        let mut searcher = Searcher::new();
+        let mut searcher = Searcher::default();
         let result = searcher.search(&mut state, 14, None::<fn(SearchResult)>);
         result.analytics.print();
     }

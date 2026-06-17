@@ -203,7 +203,8 @@ impl UCIAdapter {
             }
             UCICommand::Perft(depth) => {
                 let mut out = self.out.lock().unwrap();
-                Self::write_perft_divide(&mut self.state, depth, &mut *out).ok();
+                let mut state = self.state;
+                Self::write_perft_divide(&mut state, depth, &mut *out).ok();
             }
             UCICommand::Unknown(_) => {}
         }

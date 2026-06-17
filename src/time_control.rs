@@ -59,9 +59,9 @@ pub struct TimeControl {
 }
 
 impl TimeControl {
-    /// Creates a [`TimeControl`] with a 50 ms default safety buffer.
+    /// Creates a [`TimeControl`] with a 10 ms default safety buffer.
     pub fn new() -> Self {
-        Self::with_overhead(Duration::from_millis(50))
+        Self::with_overhead(Duration::from_millis(10))
     }
 
     /// Creates a [`TimeControl`] whose move budget reserves `move_overhead`

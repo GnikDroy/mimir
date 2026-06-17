@@ -5,7 +5,7 @@
 //! ordering are less likely to be best.
 //!
 //! Formula: `BASE + ln(d) * ln(m) / DIV`. Tune aggression by adjusting
-//! [`BASE`] (baseline reduction floor) or [`DIV`] (smaller → more aggressive
+//! `BASE` (baseline reduction floor) or `DIV` (smaller → more aggressive
 //! slope).
 
 use crate::search::MAX_PLY;
@@ -16,8 +16,6 @@ const BASE: f64 = 0.75;
 
 /// Divisor on the `ln(d) * ln(m)` term. Lower → reduces harder.
 const DIV: f64 = 2.25;
-
-const LN_2: f64 = 0.693_147_180_559_945_3;
 
 /// `const fn` natural-log approximation for positive integers.
 ///
@@ -40,7 +38,7 @@ const fn ln_approx(x: usize) -> f64 {
     let u7 = u5 * u2;
     let u9 = u7 * u2;
     let atanh_u = u + u3 / 3.0 + u5 / 5.0 + u7 / 7.0 + u9 / 9.0;
-    LN_2 * (k as f64) + 2.0 * atanh_u
+    std::f64::consts::LN_2 * (k as f64) + 2.0 * atanh_u
 }
 
 const fn compute_reduction(depth: usize, move_idx: usize) -> u8 {

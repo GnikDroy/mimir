@@ -113,18 +113,26 @@ pub enum UCICommand {
 }
 
 impl UCICommand {
-    /// Reads one line from `reader` and parses it as a [`UCICommand`].
+    /// Reads one command from `reader` and parses it as a [`UCICommand`].
     ///
-    /// Returns [`None`] on EOF, on I/O error, or when the line is empty
-    /// after trimming. A non-empty line always parses to `Some`, falling
-    /// back to [`UCICommand::Unknown`] if no variant matches.
+    /// Returns [`None`] on EOF and I/O error.
+    /// Empty or all-whitespace lines are skipped, so a non-`None` result always contains
+    /// a valid command variant (though it may be [`UCICommand::Unknown`]).
     pub fn read<R: BufRead>(reader: &mut R) -> Option<Self> {
         let mut line = String::new();
-        reader.read_line(&mut line).ok()?;
-        let line = line.trim();
-        match line {
-            "" => None,
-            _ => Some(Self::parse(line)),
+        loop {
+            line.clear();
+            let bytes_read = reader.read_line(&mut line).ok()?;
+
+            // EOF reached
+            if bytes_read == 0 {
+                return None;
+            }
+
+            let line = line.trim();
+            if !line.is_empty() {
+                return Some(Self::parse(line));
+            }
         }
     }
 

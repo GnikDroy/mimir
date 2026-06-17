@@ -20,7 +20,7 @@ pub const HASH_MAX_MB: usize = 4096;
 
 /// `Move Overhead` (ms) — safety buffer subtracted from each move's
 /// time budget to absorb UCI / GUI round-trip latency.
-pub const MOVE_OVERHEAD_DEFAULT_MS: u64 = 50;
+pub const MOVE_OVERHEAD_DEFAULT_MS: u64 = 10;
 pub const MOVE_OVERHEAD_MIN_MS: u64 = 0;
 pub const MOVE_OVERHEAD_MAX_MS: u64 = 5000;
 

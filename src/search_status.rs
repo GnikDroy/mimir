@@ -5,7 +5,7 @@
 //! deadline. The variants are kept separate so callers (UCI layer,
 //! iterative deepening) can report and react appropriately.
 //!
-//! The `?` operator is supported via [`Try`](std::ops::Try) so search
+//! The `?` operator is supported via [`Try`] so search
 //! internals can propagate abort reasons without boilerplate.
 use std::convert::Infallible;
 use std::ops::{ControlFlow, FromResidual, Residual, Try};
@@ -79,7 +79,10 @@ mod tests {
 
     #[test]
     fn test_try_propagates_complete() {
-        assert_eq!(add_one(SearchStatus::Complete(41)), SearchStatus::Complete(42));
+        assert_eq!(
+            add_one(SearchStatus::Complete(41)),
+            SearchStatus::Complete(42)
+        );
     }
 
     #[test]

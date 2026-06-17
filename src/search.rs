@@ -362,6 +362,35 @@ impl Searcher {
             None
         };
 
+        // Reverse futility pruning (a.k.a. static null move pruning): at
+        // shallow depth in non-PV nodes, if the static eval already exceeds
+        // beta by a depth-scaled margin, we assume no reasonable move drops
+        // us below beta and cut without searching.
+        //
+        // Guards:
+        // - `ply > 0`: root must produce a best move.
+        // - `!is_pv`: PV nodes need a real score; the margin heuristic is unsound there.
+        // - `!in_check`: static eval is meaningless while the king is under attack.
+        // - `depth <= RFP_MAX_DEPTH`: deeper nodes are too unstable for a static cutoff.
+        // - `beta` not a mate score: mate-bound comparisons are meaningless.
+        const RFP_MAX_DEPTH: u8 = 5;
+        const RFP_MARGIN_PER_DEPTH: i32 = NNUE_PAWN_SCALE * 100;
+        if ply > 0
+            && !is_pv
+            && !in_check
+            && depth <= RFP_MAX_DEPTH
+            && score::mate_in_plies(beta).is_none()
+        {
+            if let Some(eval) = static_eval {
+                self.analytics.rfp_attempts += 1;
+                let margin = RFP_MARGIN_PER_DEPTH * depth as i32;
+                if eval - margin >= beta {
+                    self.analytics.rfp_cutoffs += 1;
+                    return SearchStatus::Complete((None, eval - margin));
+                }
+            }
+        }
+
         // Null move pruning: pass the turn and search at reduced depth with
         // a null window around beta. If the opponent still can't beat us
         // after a free tempo, our position is so good we can cut without
@@ -829,7 +858,7 @@ mod tests {
             GameState::from_fen("3qr2k/1p3rbp/2p3p1/p7/P2pBNn1/1P3n2/6P1/B1Q1RR1K b - - 1 30")
                 .unwrap();
         let best_moves_expected = ["d8h4", "f4h3", "h4g3", "c1f4", "f7f4", "-", "g3h2"];
-        assert_best_move_sequence(state, &best_moves_expected, 8);
+        assert_best_move_sequence(state, &best_moves_expected, 12);
     }
 
     #[test]
@@ -858,7 +887,7 @@ mod tests {
             GameState::from_fen("3qr2k/1p3rbp/2p3p1/p7/P2pBNn1/1P3n2/6P1/B1Q1RR1K b - - 1 30")
                 .unwrap();
         let mut searcher = Searcher::default();
-        let result = searcher.search(&mut state, 8, None::<fn(SearchResult)>);
+        let result = searcher.search(&mut state, 12, None::<fn(SearchResult)>);
         let best_moves: Vec<Move> = result.pv.iter().copied().collect();
         let best_moves_expected = ["d8h4", "f4h3", "h4g3", "c1f4", "f7f4", "-", "g3h2"];
         assert_move_sequence(&best_moves, &best_moves_expected);

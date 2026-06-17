@@ -68,6 +68,10 @@ pub struct SearchAnalytics {
     /// Subset of `null_move_attempts` where the reduced null-window search
     /// failed high and we cut.
     pub null_move_cutoffs: u64,
+    /// Times reverse futility pruning was attempted (passed all guards).
+    pub rfp_attempts: u64,
+    /// Subset of `rfp_attempts` where the static-eval margin beat beta and we cut.
+    pub rfp_cutoffs: u64,
     /// Times late move reductions were applied (passed all guards and the
     /// table returned a nonzero reduction).
     pub lmr_attempts: u64,
@@ -342,6 +346,24 @@ impl fmt::Display for SearchAnalytics {
             "Null move cutoffs:",
             with_commas(self.null_move_cutoffs),
             pct(self.null_move_cutoffs, self.null_move_attempts),
+            w = LABEL_WIDTH,
+        )?;
+        writeln!(f)?;
+
+        // Reverse futility pruning
+        writeln!(
+            f,
+            "{:<w$}{}",
+            "RFP attempts:",
+            with_commas(self.rfp_attempts),
+            w = LABEL_WIDTH,
+        )?;
+        writeln!(
+            f,
+            "{:<w$}{} ({:.1}% of attempts)",
+            "RFP cutoffs:",
+            with_commas(self.rfp_cutoffs),
+            pct(self.rfp_cutoffs, self.rfp_attempts),
             w = LABEL_WIDTH,
         )?;
         writeln!(f)?;

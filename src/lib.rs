@@ -29,6 +29,7 @@ pub mod pv_table;
 pub mod score;
 pub mod search;
 pub mod search_status;
+pub mod see;
 pub mod stack_vec;
 pub mod time_control;
 pub mod transposition_table;

@@ -17,7 +17,7 @@ use crate::bitboard::*;
 use crate::core::*;
 use crate::state::GameState;
 
-/// Middlegame piece-square table for pawns, laid out rank 8 → rank 1
+/// Middlegame piece-square table for pawns, laid out rank 8 -> rank 1
 /// (top of the array is rank 8, bottom is rank 1). White reads it
 /// directly; black reads it after [`Square::flip_vertical`].
 #[rustfmt::skip]

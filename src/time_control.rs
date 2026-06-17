@@ -275,7 +275,7 @@ mod tests {
 
     #[test]
     fn test_overhead_saturating_sub() {
-        // remaining < overhead → saturating subtraction should produce
+        // remaining < overhead -> saturating subtraction should produce
         // a zero-duration hard budget without panicking.
         let mut tc = TimeControl::with_overhead(Duration::from_millis(500));
         tc.update_clock(

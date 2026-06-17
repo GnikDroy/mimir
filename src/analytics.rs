@@ -21,14 +21,30 @@ pub struct SearchAnalytics {
     /// Move-loop beta cutoffs inside quiescence (after make_move).
     /// Does NOT include stand-pat — see `quiescence_stand_pat_cutoffs`.
     pub quiescence_alpha_beta_cutoffs: u64,
+    /// Times qsearch computed `stand_pat` and tested it against beta.
+    /// Equal to the non-check qsearch nodes: stand-pat needs a valid
+    /// eval, so check evasions don't contribute.
+    pub quiescence_stand_pat_attempts: u64,
     /// Stand-pat fail-high cutoffs inside quiescence: the static eval
     /// already meets or exceeds beta, so the position is at least as
     /// good as the current bound and we skip generating recaptures.
     pub quiescence_stand_pat_cutoffs: u64,
-    /// Captures skipped by delta pruning inside quiescence: the stand-pat
-    /// plus the maximum possible material gain plus a slack margin still
-    /// can't reach alpha, so the move is hopeless.
+    /// Times the delta pruning gate ran on a move inside the qsearch
+    /// move loop — i.e., a move scored against `delta_baseline` (not in
+    /// check, alpha not a mate score).
+    pub delta_pruning_attempts: u64,
+    /// Subset of `delta_pruning_attempts` where the stand-pat plus the
+    /// maximum possible material gain plus a slack margin still can't
+    /// reach alpha, so the move is skipped as hopeless.
     pub delta_prunings: u64,
+    /// Captures that reached the SEE pruning gate (passed delta and
+    /// are eligible: not in check, not a mate-score alpha). Tracks how
+    /// often we paid for the SEE computation, with or without a prune.
+    pub see_pruning_attempts: u64,
+    /// Subset of `see_pruning_attempts` where the swap-off on the
+    /// destination square loses material at the static-exchange level,
+    /// so the capture is skipped as unsound.
+    pub see_prunings: u64,
     /// Probes that returned an entry, regardless of stored depth. Includes
     /// shallow entries that feed move ordering but can't directly cut.
     pub transposition_table_entries_found: u64,
@@ -197,20 +213,55 @@ impl fmt::Display for SearchAnalytics {
         writeln!(
             f,
             "{:<w$}{} ({:.1}% of quiescence nodes)",
-            "Stand-pat cutoffs (quiescence):",
-            with_commas(self.quiescence_stand_pat_cutoffs),
+            "Stand-pat attempts (quiescence):",
+            with_commas(self.quiescence_stand_pat_attempts),
             pct(
-                self.quiescence_stand_pat_cutoffs,
+                self.quiescence_stand_pat_attempts,
                 self.quiescence_nodes_searched,
             ),
             w = LABEL_WIDTH,
         )?;
         writeln!(
             f,
+            "{:<w$}{} ({:.1}% of attempts)",
+            "Stand-pat cutoffs (quiescence):",
+            with_commas(self.quiescence_stand_pat_cutoffs),
+            pct(
+                self.quiescence_stand_pat_cutoffs,
+                self.quiescence_stand_pat_attempts,
+            ),
+            w = LABEL_WIDTH,
+        )?;
+        writeln!(
+            f,
             "{:<w$}{} ({:.1}% of quiescence nodes)",
+            "Delta pruning attempts (quiescence):",
+            with_commas(self.delta_pruning_attempts),
+            pct(self.delta_pruning_attempts, self.quiescence_nodes_searched),
+            w = LABEL_WIDTH,
+        )?;
+        writeln!(
+            f,
+            "{:<w$}{} ({:.1}% of attempts)",
             "Delta prunings (quiescence):",
             with_commas(self.delta_prunings),
-            pct(self.delta_prunings, self.quiescence_nodes_searched),
+            pct(self.delta_prunings, self.delta_pruning_attempts),
+            w = LABEL_WIDTH,
+        )?;
+        writeln!(
+            f,
+            "{:<w$}{} ({:.1}% of quiescence nodes)",
+            "SEE pruning attempts (quiescence):",
+            with_commas(self.see_pruning_attempts),
+            pct(self.see_pruning_attempts, self.quiescence_nodes_searched),
+            w = LABEL_WIDTH,
+        )?;
+        writeln!(
+            f,
+            "{:<w$}{} ({:.1}% of attempts)",
+            "SEE prunings (quiescence):",
+            with_commas(self.see_prunings),
+            pct(self.see_prunings, self.see_pruning_attempts),
             w = LABEL_WIDTH,
         )?;
         writeln!(f)?;

@@ -11,6 +11,7 @@ use crate::nnue::evaluate;
 use crate::pv_table::PvTable;
 use crate::score;
 use crate::search_status::SearchStatus;
+use crate::see::see_ge;
 use crate::stack_vec::StackVec;
 use crate::state::GameState;
 use crate::time_control::TimeControl;
@@ -659,6 +660,7 @@ impl Searcher {
         // Stand-pat is only valid when not in check
         let stand_pat = if !in_check {
             let sp = evaluate(state);
+            self.analytics.quiescence_stand_pat_attempts += 1;
             if sp >= beta {
                 self.analytics.quiescence_stand_pat_cutoffs += 1;
                 return SearchStatus::Complete(beta);
@@ -690,6 +692,7 @@ impl Searcher {
             // can't reach alpha.
             // TODO: You want to disable delta pruning in the endgame.
             if let Some(sp) = delta_baseline {
+                self.analytics.delta_pruning_attempts += 1;
                 let captured = mv
                     .get_captured_piece()
                     .map_or(0, |p| NNUE_SCALE * PIECE_VALUES[p as usize]);
@@ -701,6 +704,18 @@ impl Searcher {
                 };
                 if sp + captured + promo_gain + DELTA_MARGIN < alpha {
                     self.analytics.delta_prunings += 1;
+                    continue;
+                }
+            }
+
+            // SEE pruning: skip captures that lose material in the static
+            // exchange on `to`. Same eligibility as delta (`delta_baseline`
+            // is `Some` iff not in check and alpha is not a mate score) so
+            // we never prune forced check evasions or mate-tactic captures.
+            if delta_baseline.is_some() && mv.is_capture() {
+                self.analytics.see_pruning_attempts += 1;
+                if !see_ge(state, mv, 0) {
+                    self.analytics.see_prunings += 1;
                     continue;
                 }
             }

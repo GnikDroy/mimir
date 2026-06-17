@@ -5,7 +5,7 @@
 //! ordering are less likely to be best.
 //!
 //! Formula: `BASE + ln(d) * ln(m) / DIV`. Tune aggression by adjusting
-//! `BASE` (baseline reduction floor) or `DIV` (smaller → more aggressive
+//! `BASE` (baseline reduction floor) or `DIV` (smaller -> more aggressive
 //! slope).
 
 use crate::search::MAX_PLY;
@@ -14,7 +14,7 @@ use crate::types::MAX_MOVE_COUNT;
 /// Reduction floor added to every (d, m) entry once `d ≥ 2` and `m ≥ 1`.
 const BASE: f64 = 0.75;
 
-/// Divisor on the `ln(d) * ln(m)` term. Lower → reduces harder.
+/// Divisor on the `ln(d) * ln(m)` term. Lower -> reduces harder.
 const DIV: f64 = 2.25;
 
 /// `const fn` natural-log approximation for positive integers.

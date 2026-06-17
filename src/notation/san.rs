@@ -42,12 +42,12 @@ impl SAN {
         }
     }
 
-    /// File index → SAN file letter (`a`–`h`).
+    /// File index -> SAN file letter (`a`–`h`).
     fn file_to_char(file: File) -> char {
         (b'a' + file as u8) as char
     }
 
-    /// Rank index → SAN rank digit (`1`–`8`).
+    /// Rank index -> SAN rank digit (`1`–`8`).
     fn rank_to_char(rank: Rank) -> char {
         (b'1' + rank as u8) as char
     }

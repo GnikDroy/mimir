@@ -177,12 +177,14 @@ impl UCICommand {
             _ => return Self::Unknown(format!("position {}", mode)),
         };
 
-        match tokens.peek().copied() {
-            None => {}
-            Some("moves") => {
+        // Spec: unknown tokens are skipped, not rejected. Scan until we
+        // find `moves` (which introduces the move list) or run out.
+        while let Some(&token) = tokens.peek() {
+            if token == "moves" {
                 tokens.next();
+                break;
             }
-            _ => return Self::Unknown("position".to_string()),
+            tokens.next();
         }
 
         let moves = tokens.map(str::to_string).collect();
@@ -385,6 +387,44 @@ mod tests {
             cmd,
             UCICommand::Position {
                 fen: Some(fen.to_string()),
+                moves: vec![]
+            }
+        );
+    }
+
+    #[test]
+    fn test_parse_position_skips_unknown_tokens_between_startpos_and_moves() {
+        // Spec: unknown tokens should be ignored, not rejected.
+        let cmd = UCICommand::parse("position startpos foo bar moves e2e4");
+        assert_eq!(
+            cmd,
+            UCICommand::Position {
+                fen: None,
+                moves: vec!["e2e4".to_string()]
+            }
+        );
+    }
+
+    #[test]
+    fn test_parse_position_skips_unknown_tokens_between_fen_and_moves() {
+        let fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+        let cmd = UCICommand::parse(&format!("position fen {} junk moves e2e4", fen));
+        assert_eq!(
+            cmd,
+            UCICommand::Position {
+                fen: Some(fen.to_string()),
+                moves: vec!["e2e4".to_string()]
+            }
+        );
+    }
+
+    #[test]
+    fn test_parse_position_trailing_garbage_without_moves_is_ignored() {
+        let cmd = UCICommand::parse("position startpos junk more junk");
+        assert_eq!(
+            cmd,
+            UCICommand::Position {
+                fen: None,
                 moves: vec![]
             }
         );

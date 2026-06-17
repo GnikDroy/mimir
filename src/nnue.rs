@@ -10,6 +10,9 @@ pub const SCALE: i32 = 400;
 const QA: i16 = 255;
 const QB: i16 = 64;
 
+/// Multiplier from centipawn-style PIECE_VALUES into this network's eval units.
+pub const NNUE_PAWN_SCALE: i32 = SCALE / 100;
+
 pub static NNUE: Network =
     unsafe { std::mem::transmute(*include_bytes!("../resources/beans.bin")) };
 

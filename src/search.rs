@@ -7,7 +7,7 @@ use crate::core::*;
 use crate::late_move_reduction_table::reduction;
 use crate::move_score::MoveScore;
 use crate::move_scorer::{MoveScorer, PIECE_VALUES};
-use crate::nnue::evaluate;
+use crate::nnue::{evaluate, NNUE_PAWN_SCALE};
 use crate::pv_table::PvTable;
 use crate::score;
 use crate::search_status::SearchStatus;
@@ -674,14 +674,7 @@ impl Searcher {
         // Move scoring
         buf.score_quiescence();
 
-        // Delta pruning uses NNUE-scaled piece values: this network's
-        // eval shifts ~200-300 per pawn captured (sampled empirically
-        // across diverse positions), but PIECE_VALUES are in nominal
-        // centipawns where pawn=100. Multiplying by NNUE_SCALE realigns
-        // the units; using raw PIECE_VALUES systematically
-        // under-estimates `sp + captured`
-        const NNUE_SCALE: i32 = crate::nnue::SCALE / PIECE_VALUES[Piece::Pawn as usize];
-        const DELTA_MARGIN: i32 = NNUE_SCALE * 2 * PIECE_VALUES[Piece::Pawn as usize];
+        const DELTA_MARGIN: i32 = NNUE_PAWN_SCALE * 2 * PIECE_VALUES[Piece::Pawn as usize];
 
         // Eligibility: stand-pat must be valid (not in check) and alpha
         // must not be a mate score (else we could mask a forced tactic).
@@ -695,9 +688,9 @@ impl Searcher {
                 self.analytics.delta_pruning_attempts += 1;
                 let captured = mv
                     .get_captured_piece()
-                    .map_or(0, |p| NNUE_SCALE * PIECE_VALUES[p as usize]);
+                    .map_or(0, |p| NNUE_PAWN_SCALE * PIECE_VALUES[p as usize]);
                 let promo_gain = if mv.is_promotion() {
-                    NNUE_SCALE
+                    NNUE_PAWN_SCALE
                         * (PIECE_VALUES[Piece::Queen as usize] - PIECE_VALUES[Piece::Pawn as usize])
                 } else {
                     0

@@ -6,7 +6,7 @@ use crate::core::*;
 use crate::state::GameState;
 
 const HIDDEN_SIZE: usize = 64;
-const SCALE: i32 = 400;
+pub const SCALE: i32 = 400;
 const QA: i16 = 255;
 const QB: i16 = 64;
 

@@ -26,7 +26,7 @@ const QUEEN_PROMO_BONUS: i32 = 100_000;
 const KILLER_BONUS: i32 = 9_000;
 
 /// Material values aligned to `core::Piece` ordering
-const PIECE_VALUES: [i32; Piece::NUM] = [20_000, 900, 500, 330, 320, 100];
+pub const PIECE_VALUES: [i32; Piece::NUM] = [20_000, 900, 500, 330, 320, 100];
 
 pub struct MoveScorer {
     killer_moves: Box<[[Move; KILLER_MOVES_PER_PLY]; MAX_PLY]>,

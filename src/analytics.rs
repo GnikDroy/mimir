@@ -25,6 +25,10 @@ pub struct SearchAnalytics {
     /// already meets or exceeds beta, so the position is at least as
     /// good as the current bound and we skip generating recaptures.
     pub quiescence_stand_pat_cutoffs: u64,
+    /// Captures skipped by delta pruning inside quiescence: the stand-pat
+    /// plus the maximum possible material gain plus a slack margin still
+    /// can't reach alpha, so the move is hopeless.
+    pub delta_prunings: u64,
     /// Probes that returned an entry, regardless of stored depth. Includes
     /// shallow entries that feed move ordering but can't directly cut.
     pub transposition_table_entries_found: u64,
@@ -199,6 +203,14 @@ impl fmt::Display for SearchAnalytics {
                 self.quiescence_stand_pat_cutoffs,
                 self.quiescence_nodes_searched,
             ),
+            w = LABEL_WIDTH,
+        )?;
+        writeln!(
+            f,
+            "{:<w$}{} ({:.1}% of quiescence nodes)",
+            "Delta prunings (quiescence):",
+            with_commas(self.delta_prunings),
+            pct(self.delta_prunings, self.quiescence_nodes_searched),
             w = LABEL_WIDTH,
         )?;
         writeln!(f)?;

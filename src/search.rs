@@ -6,7 +6,7 @@ use crate::analytics::SearchAnalytics;
 use crate::core::*;
 use crate::late_move_reduction_table::reduction;
 use crate::move_score::MoveScore;
-use crate::move_scorer::MoveScorer;
+use crate::move_scorer::{MoveScorer, PIECE_VALUES};
 use crate::nnue::evaluate;
 use crate::pv_table::PvTable;
 use crate::score;
@@ -657,19 +657,55 @@ impl Searcher {
         }
 
         // Stand-pat is only valid when not in check
-        if !in_check {
-            let stand_pat = evaluate(state);
-            if stand_pat >= beta {
+        let stand_pat = if !in_check {
+            let sp = evaluate(state);
+            if sp >= beta {
                 self.analytics.quiescence_stand_pat_cutoffs += 1;
                 return SearchStatus::Complete(beta);
             }
-            alpha = alpha.max(stand_pat);
-        }
+            alpha = alpha.max(sp);
+            Some(sp)
+        } else {
+            None
+        };
 
         // Move scoring
         buf.score_quiescence();
 
+        // Delta pruning uses NNUE-scaled piece values: this network's
+        // eval shifts ~200-300 per pawn captured (sampled empirically
+        // across diverse positions), but PIECE_VALUES are in nominal
+        // centipawns where pawn=100. Multiplying by NNUE_SCALE realigns
+        // the units; using raw PIECE_VALUES systematically
+        // under-estimates `sp + captured`
+        const NNUE_SCALE: i32 = crate::nnue::SCALE / PIECE_VALUES[Piece::Pawn as usize];
+        const DELTA_MARGIN: i32 = NNUE_SCALE * 2 * PIECE_VALUES[Piece::Pawn as usize];
+
+        // Eligibility: stand-pat must be valid (not in check) and alpha
+        // must not be a mate score (else we could mask a forced tactic).
+        let delta_baseline = stand_pat.filter(|_| score::mate_in_plies(alpha).is_none());
+
         for mv in buf.ordered() {
+            // Delta pruning: skip captures whose best-case material gain still
+            // can't reach alpha.
+            // TODO: You want to disable delta pruning in the endgame.
+            if let Some(sp) = delta_baseline {
+                let captured = mv
+                    .get_captured_piece()
+                    .map_or(0, |p| NNUE_SCALE * PIECE_VALUES[p as usize]);
+                let promo_gain = if mv.is_promotion() {
+                    NNUE_SCALE
+                        * (PIECE_VALUES[Piece::Queen as usize] - PIECE_VALUES[Piece::Pawn as usize])
+                } else {
+                    0
+                };
+                if sp + captured + promo_gain + DELTA_MARGIN < alpha {
+                    self.analytics.delta_prunings += 1;
+                    continue;
+                }
+            }
+
+            // Quiescence search recursion
             self.position_history.push(state.zobrist_hash);
             let undo = state.make_move(mv);
             let status = self.quiescence(state, ply + 1, -beta, -alpha).map(|e| -e);

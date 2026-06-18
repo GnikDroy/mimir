@@ -10,12 +10,14 @@ Mimir is a UCI compatible chess engine built from scratch.
 - Transposition tables with zobrist hashing.
 - A classical PST tapered evaluation function optimized by Texel's tuning.
 - Modern NNUE based evaluation based on 768 perspective architechture with incremental updates.
-- Move ordering via hash moves from transposition tables, Most Valuable Victim - Least Valuable Aggressor (MVV-LVA) and Static Exchange Evaluation (SEE).
+- Move ordering via hash moves from transposition tables, Most Valuable Victim - Least Valuable Aggressor (MVV-LVA) for captures.
 - Killer moves and history heuristics for quiet moves.
 - Principal variation search (PVS) with aspiration windows.
 - Null move pruning (NMP) and Late move reductions (LMR)
-- A UCI compatible interface with a time scheduler.
-- Playable on lichess via the lichess bot API.
+- Reverse Futility Pruning (RFP)
+- Delta pruning and Static Exchange Evaluation (SEE).
+- A UCI compatible interface with a soft-hard limit time scheduler.
+- Playable on lichess [@playmimir](lichess.org/@/playmimir). Uses the lichess bot API. 
 
 ## Building
 

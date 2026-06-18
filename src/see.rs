@@ -272,8 +272,7 @@ mod tests {
         // once the queen leaves d4. SEE = +100 - 900 + 900 = +100.
         // (Black king on a8 keeps the position legal — h8 would be
         // attacked by our queen on d4 along the long diagonal.)
-        let state =
-            GameState::from_fen("k2q4/8/8/3p4/3Q4/8/8/3R3K w - - 0 1").unwrap();
+        let state = GameState::from_fen("k2q4/8/8/3p4/3Q4/8/8/3R3K w - - 0 1").unwrap();
         let mv = find_move(&state, "d4d5");
         assert!(see_ge(&state, mv, 100));
         assert!(see_ge(&state, mv, 0));
@@ -335,8 +334,7 @@ mod tests {
     fn castling_short_circuits_to_zero() {
         // O-O — castling is never a capture, so SEE is vacuously zero.
         let state =
-            GameState::from_fen("r3k2r/pppppppp/8/8/8/8/PPPPPPPP/R3K2R w KQkq - 0 1")
-                .unwrap();
+            GameState::from_fen("r3k2r/pppppppp/8/8/8/8/PPPPPPPP/R3K2R w KQkq - 0 1").unwrap();
         let mv = find_move(&state, "e1g1");
         assert!(see_ge(&state, mv, 0));
         assert!(!see_ge(&state, mv, 1));
@@ -348,8 +346,7 @@ mod tests {
         // takes e7; black's e8 rook recaptures; white's e1 rook is
         // X-rayed through the now-empty e2/e7 squares and re-recaptures.
         // SEE = +500 - 500 + 500 = +500.
-        let state =
-            GameState::from_fen("4r2k/4r3/8/8/8/8/4R3/4R2K w - - 0 1").unwrap();
+        let state = GameState::from_fen("4r2k/4r3/8/8/8/8/4R3/4R2K w - - 0 1").unwrap();
         let mv = find_move(&state, "e2e7");
         assert!(see_ge(&state, mv, 500));
         assert!(!see_ge(&state, mv, 501));

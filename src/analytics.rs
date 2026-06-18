@@ -72,6 +72,16 @@ pub struct SearchAnalytics {
     pub rfp_attempts: u64,
     /// Subset of `rfp_attempts` where the static-eval margin beat beta and we cut.
     pub rfp_cutoffs: u64,
+    /// Iterative-deepening iterations where the root search ran inside a
+    /// narrowed aspiration window (depth >= threshold, non-mate prev eval).
+    pub aspiration_attempts: u64,
+    /// Re-searches caused by the root score falling at or below the
+    /// window's alpha. Counted once per failing iteration, not per
+    /// iteration — a single iteration can fail-low multiple times.
+    pub aspiration_fail_low: u64,
+    /// Re-searches caused by the root score meeting or exceeding the
+    /// window's beta. Counted per failing search, like `aspiration_fail_low`.
+    pub aspiration_fail_high: u64,
     /// Times late move reductions were applied (passed all guards and the
     /// table returned a nonzero reduction).
     pub lmr_attempts: u64,
@@ -364,6 +374,32 @@ impl fmt::Display for SearchAnalytics {
             "RFP cutoffs:",
             with_commas(self.rfp_cutoffs),
             pct(self.rfp_cutoffs, self.rfp_attempts),
+            w = LABEL_WIDTH,
+        )?;
+        writeln!(f)?;
+
+        // Aspiration windows
+        writeln!(
+            f,
+            "{:<w$}{}",
+            "Aspiration attempts:",
+            with_commas(self.aspiration_attempts),
+            w = LABEL_WIDTH,
+        )?;
+        writeln!(
+            f,
+            "{:<w$}{} ({:.1}% of attempts)",
+            "Aspiration fail-low re-searches:",
+            with_commas(self.aspiration_fail_low),
+            pct(self.aspiration_fail_low, self.aspiration_attempts),
+            w = LABEL_WIDTH,
+        )?;
+        writeln!(
+            f,
+            "{:<w$}{} ({:.1}% of attempts)",
+            "Aspiration fail-high re-searches:",
+            with_commas(self.aspiration_fail_high),
+            pct(self.aspiration_fail_high, self.aspiration_attempts),
             w = LABEL_WIDTH,
         )?;
         writeln!(f)?;

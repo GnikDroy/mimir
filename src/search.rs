@@ -215,7 +215,7 @@ impl Searcher {
 
         self.time_control.set_search_deadline(state.side_to_move);
         for depth in 1..=max_depth {
-            let status = self.alpha_beta(state, depth, 0, i32::MIN / 2, i32::MAX / 2, true);
+            let status = self.aspiration_search(state, depth, best_eval);
             let aborted = !matches!(status, SearchStatus::Complete(_));
             match status {
                 SearchStatus::Complete((_, eval)) => {
@@ -260,6 +260,63 @@ impl Searcher {
             evaluation: best_eval,
             analytics: self.analytics,
             pv,
+        }
+    }
+
+    /// Aspiration window wrapper around the root alpha-beta call.
+    ///
+    /// At sufficient depth we expect the new score to land near the
+    /// previous iteration's score, so we search a narrow window centered
+    /// on `prev_eval`. A successful search returns the score directly;
+    /// fail-low / fail-high re-searches widen only the failing bound,
+    /// doubling `delta` each time, and fall back to a full window once
+    /// `delta` exceeds [`ASPIRATION_MAX_DELTA`].
+    ///
+    /// Skipped at low depth (eval is too noisy) and when `prev_eval` is
+    /// a mate score (mate-bound windows are meaningless).
+    fn aspiration_search(
+        &mut self,
+        state: &mut GameState,
+        depth: u8,
+        prev_eval: i32,
+    ) -> SearchStatus<(Option<Move>, i32)> {
+        const FULL_ALPHA: i32 = i32::MIN / 2;
+        const FULL_BETA: i32 = i32::MAX / 2;
+        const ASPIRATION_MIN_DEPTH: u8 = 4;
+        const ASPIRATION_INITIAL_DELTA: i32 = NNUE_PAWN_SCALE * 25;
+        const ASPIRATION_MAX_DELTA: i32 = NNUE_PAWN_SCALE * 1000;
+
+        if depth < ASPIRATION_MIN_DEPTH || score::mate_in_plies(prev_eval).is_some() {
+            return self.alpha_beta(state, depth, 0, FULL_ALPHA, FULL_BETA, true);
+        }
+
+        self.analytics.aspiration_attempts += 1;
+        let mut delta = ASPIRATION_INITIAL_DELTA;
+        let mut alpha = prev_eval - delta;
+        let mut beta = prev_eval + delta;
+
+        loop {
+            let (best_move, eval) = self.alpha_beta(state, depth, 0, alpha, beta, true)?;
+
+            if eval <= alpha {
+                self.analytics.aspiration_fail_low += 1;
+                delta = delta.saturating_mul(2);
+                alpha = if delta > ASPIRATION_MAX_DELTA {
+                    FULL_ALPHA
+                } else {
+                    prev_eval - delta
+                };
+            } else if eval >= beta {
+                self.analytics.aspiration_fail_high += 1;
+                delta = delta.saturating_mul(2);
+                beta = if delta > ASPIRATION_MAX_DELTA {
+                    FULL_BETA
+                } else {
+                    prev_eval + delta
+                };
+            } else {
+                return SearchStatus::Complete((best_move, eval));
+            }
         }
     }
 

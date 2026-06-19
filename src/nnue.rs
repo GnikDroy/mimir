@@ -195,7 +195,7 @@ pub fn empty_accumulators() -> [Accumulator; Color::NUM] {
 }
 
 /// Adds a piece-on-square feature to both perspective accumulators.
-#[inline]
+#[inline(always)]
 pub fn add_piece(
     accumulators: &mut [Accumulator; Color::NUM],
     color: Color,
@@ -207,7 +207,7 @@ pub fn add_piece(
 }
 
 /// Removes a piece-on-square feature from both perspective accumulators.
-#[inline]
+#[inline(always)]
 pub fn remove_piece(
     accumulators: &mut [Accumulator; Color::NUM],
     color: Color,
@@ -237,6 +237,7 @@ pub fn refresh_from_state(state: &GameState) -> [Accumulator; Color::NUM] {
 ///
 /// Reads the perspective accumulators kept up-to-date incrementally by
 /// `make_move`/`unmake_move` and runs the network's output layer.
+#[inline]
 pub fn evaluate(state: &GameState) -> i32 {
     let stm = state.side_to_move;
     NNUE.evaluate(

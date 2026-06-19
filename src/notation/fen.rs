@@ -121,6 +121,17 @@ impl GameState {
 
         gs.zobrist_hash = ZOBRIST_HASHER.hash(&gs);
         gs.accumulators = crate::nnue::refresh_from_state(&gs);
+
+        let white_king = gs.pieces[Color::White as usize][Piece::King as usize];
+        let black_king = gs.pieces[Color::Black as usize][Piece::King as usize];
+        if white_king.count_ones() != 1 || black_king.count_ones() != 1 {
+            return Err("Incorrect number of kings!".to_owned());
+        }
+
+        if gs.is_in_check(gs.side_to_move.opposite()) {
+            return Err("Side to move in check!".to_owned());
+        }
+
         Ok(gs)
     }
 

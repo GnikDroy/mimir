@@ -153,11 +153,13 @@ impl Searcher {
     /// to the current state; the current state's hash is NOT in the
     /// stack.
     ///
-    /// `halfmove_clock` is a safe upper bound on lookback — captures,
-    /// pawn moves, and castling all alter the zobrist hash in a way no
-    /// prior position can match, so positions before any such move
-    /// cannot be a repetition. (Castling doesn't reset `halfmove_clock`,
-    /// so this bound is loose rather than tight, but that's harmless.)
+    /// `halfmove_clock` is a safe upper bound on lookback.
+    /// Captures, pawn moves, castling, and loss of en passant right,
+    /// all alter the zobrist hash in a way no prior position can match.
+    /// So positions before any such move cannot be a repetition.
+    ///
+    /// That being said, castling and loss of e.p. square doesn't reset
+    /// `halfmove_clock`, so this bound is loose , but that's harmless.)
     ///
     /// Only same-side-to-move positions can match, so we step back by 2.
     /// The minimum cycle length is 4 plies (each side moves and moves
@@ -198,6 +200,18 @@ impl Searcher {
         max_depth: u8,
         report_fn: Option<impl Fn(SearchResult)>,
     ) -> SearchResult {
+        // No need to search if checkmate or stalemate.
+        let is_drawn = state.halfmove_clock >= 100
+            || state.is_draw_by_insufficient_material()
+            || state.is_stalemate();
+        if state.is_checkmate() || is_drawn {
+            return SearchResult {
+                evaluation: 0,
+                analytics: SearchAnalytics::default(),
+                pv: PvList::default(),
+            };
+        }
+
         // Clear analytics
         self.analytics = SearchAnalytics::default();
 
@@ -283,7 +297,8 @@ impl Searcher {
         const FULL_ALPHA: i32 = i32::MIN / 2;
         const FULL_BETA: i32 = i32::MAX / 2;
         const ASPIRATION_MIN_DEPTH: u8 = 4;
-        const ASPIRATION_INITIAL_DELTA: i32 = NNUE_PAWN_SCALE * 25;
+        const ASPIRATION_INITIAL_DELTA: i32 =
+            NNUE_PAWN_SCALE * PIECE_VALUES[Piece::Pawn as usize] / 4;
         const ASPIRATION_MAX_DELTA: i32 = NNUE_PAWN_SCALE * 1000;
 
         if depth < ASPIRATION_MIN_DEPTH || score::mate_in_plies(prev_eval).is_some() {
@@ -339,6 +354,7 @@ impl Searcher {
         // Only at ply > 0 so the root still produces a best move
         if ply > 0
             && (state.halfmove_clock >= 100
+                || state.is_draw_by_insufficient_material()
                 || self.is_repetition(state.zobrist_hash, state.halfmove_clock))
         {
             return SearchStatus::Complete((None, 0));
@@ -718,6 +734,7 @@ impl Searcher {
         // Quiescence is normally only captures (which reset halfmove_clock)
         // but check evasions can include quiet moves, so the check still matters.
         if state.halfmove_clock >= 100
+            || state.is_draw_by_insufficient_material()
             || self.is_repetition(state.zobrist_hash, state.halfmove_clock)
         {
             return SearchStatus::Complete(0);

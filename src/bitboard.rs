@@ -38,6 +38,10 @@ pub trait BitBoardMethods {
     const FIRST_FILE: Self;
     /// Mask of the H-file.
     const LAST_FILE: Self;
+    /// Mask for light squares.
+    const LIGHT_SQUARES: Self;
+    /// Mask for dark squares.
+    const DARK_SQUARES: Self;
 
     /// Returns an 8×8 ASCII grid (`*` = set, `_` = unset) with rank 8 on
     /// top and rank 1 on the bottom. Intended for debugging output.
@@ -102,6 +106,8 @@ impl BitBoardMethods for BitBoard {
     const LAST_RANK: Self = 0xff00000000000000;
     const FIRST_FILE: Self = 0x0101010101010101;
     const LAST_FILE: Self = 0x8080808080808080;
+    const LIGHT_SQUARES: u64 = 0x55AA_55AA_55AA_55AA;
+    const DARK_SQUARES: u64 = 0xAA55_AA55_AA55_AA55;
 
     fn to_grid(&self) -> String {
         let mut repr = String::new();

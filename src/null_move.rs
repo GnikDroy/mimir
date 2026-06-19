@@ -13,6 +13,7 @@ impl GameState {
     /// pruning. Currently: requires non-pawn material to avoid
     /// zugzwang in king-and-pawn endgames, where passing the turn
     /// would falsely look winning.
+    #[inline]
     pub fn position_suitable_for_null_move(&self) -> bool {
         let me = self.side_to_move as usize;
         let non_pawn = self.pieces[me][Piece::Knight as usize]

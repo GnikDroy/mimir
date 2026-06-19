@@ -110,7 +110,7 @@ impl GameState {
     /// Returns `true` if any piece of color `attacker` attacks `sq` in
     /// the current position. Used for both check detection and castling
     /// safety. Does not require `sq` to be occupied or empty.
-    #[inline(always)]
+    #[inline]
     pub fn is_square_attacked(&self, sq: Square, attacker: Color) -> bool {
         let occ = self.occupancies[2];
         let enemy = &self.pieces[attacker as usize];
@@ -177,6 +177,39 @@ impl GameState {
     #[inline(always)]
     pub fn is_stalemate(&self) -> bool {
         !self.is_in_check(self.side_to_move) && self.no_moves()
+    }
+
+    #[inline]
+    pub fn is_draw_by_insufficient_material(&self) -> bool {
+        // Having major pieces or pawns means no draw.
+        let pawns = self.pieces[Color::White as usize][Piece::Pawn as usize]
+            | self.pieces[Color::Black as usize][Piece::Pawn as usize];
+        let rooks = self.pieces[Color::White as usize][Piece::Rook as usize]
+            | self.pieces[Color::Black as usize][Piece::Rook as usize];
+        let queens = self.pieces[Color::White as usize][Piece::Queen as usize]
+            | self.pieces[Color::Black as usize][Piece::Queen as usize];
+
+        if (pawns | rooks | queens) != 0 {
+            return false;
+        }
+
+        let bishops = self.pieces[Color::White as usize][Piece::Bishop as usize]
+            | self.pieces[Color::Black as usize][Piece::Bishop as usize];
+        let knights = self.pieces[Color::White as usize][Piece::Knight as usize]
+            | self.pieces[Color::Black as usize][Piece::Knight as usize];
+
+        // If exactly 0 or 1 minors then it is a draw.
+        let minors = bishops | knights;
+        if minors.count_ones() < 2 {
+            return true;
+        }
+
+        // If only bishops exist and all lie on the same color complex it is a draw.
+        // otherwise it is not a draw by insufficient material
+        let light_bishops = bishops & BitBoard::LIGHT_SQUARES;
+        let dark_bishops = bishops & BitBoard::DARK_SQUARES;
+
+        knights == 0 && (light_bishops == 0 || dark_bishops == 0)
     }
 
     /// Adds a piece to the board at `sq`.
@@ -538,5 +571,65 @@ impl GameState {
 
         // store updated hash
         self.zobrist_hash = key;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn assert_insufficient(fen: &str, expected: bool) {
+        let state = GameState::from_fen(fen).unwrap_or_else(|_| panic!("bad fen: {fen}"));
+        assert_eq!(
+            state.is_draw_by_insufficient_material(),
+            expected,
+            "fen: {fen}"
+        );
+    }
+
+    #[test]
+    fn test_is_draw_by_insufficient_material_draws() {
+        let draws = [
+            // K vs K
+            "8/8/8/8/8/8/8/K6k w - - 0 1",
+            // K+B vs K (lone minor)
+            "8/8/8/8/8/8/8/KB5k w - - 0 1",
+            // K+N vs K (lone minor)
+            "8/8/8/8/8/8/8/KN5k w - - 0 1",
+            // K+B vs K+B with bishops on the same color complex (C1 + F8, both dark)
+            "5b1k/8/8/8/8/8/8/K1B5 w - - 0 1",
+            // K+B+B vs K with both bishops light (B1, D1)
+            "7k/8/8/8/8/8/8/KB1B4 w - - 0 1",
+            // Three bishops across both sides, all on the light complex
+            "6bk/8/8/8/8/8/8/KB1B4 w - - 0 1",
+        ];
+        for fen in draws {
+            assert_insufficient(fen, true);
+        }
+    }
+
+    #[test]
+    fn test_is_draw_by_insufficient_material_not_draws() {
+        let not_draws = [
+            // Starting position
+            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+            // Pawn / rook / queen present
+            "8/8/8/8/8/8/P7/K6k w - - 0 1",
+            "8/8/8/8/8/8/8/KR5k w - - 0 1",
+            "8/8/8/8/8/8/8/KQ5k w - - 0 1",
+            // K+B vs K+B with bishops on opposite color complexes (B1 light, C1 dark)
+            "7k/8/8/8/8/8/8/KBb5 w - - 0 1",
+            // K+N vs K+N — two knights, not a draw
+            "7k/8/6n1/8/8/8/8/KN6 w - - 0 1",
+            // K+N+N vs K — mate is possible (not forced), not a draw here
+            "7k/8/8/8/8/8/8/KNN5 w - - 0 1",
+            // K+B+N vs K — forced win
+            "7k/8/8/8/8/8/8/KBN5 w - - 0 1",
+            // K+B+B vs K with bishops on opposite colors (A1 dark, B1 light)
+            "7k/8/8/8/8/8/8/BB5K w - - 0 1",
+        ];
+        for fen in not_draws {
+            assert_insufficient(fen, false);
+        }
     }
 }

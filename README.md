@@ -5,7 +5,7 @@ Mimir is a UCI compatible chess engine built from scratch.
 ## Features
 
 - Bitboard move generation (legal & pseudo-legal) verified with perft tests.
-- Full compliance with FIDE rules: 50 move rule, three-fold-repetition & insufficient material.
+- Full compliance of drawing rules: Insufficient material, three-fold-repetition, and 50 move rule.
 - Negamax alpha-beta pruning with iterative deepening depth first search and quiescence search to counter horizon effects.
 - Transposition tables with zobrist hashing.
 - A classical PST tapered evaluation function optimized by Texel's tuning.

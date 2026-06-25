@@ -298,7 +298,7 @@ impl Searcher {
         const FULL_BETA: i32 = i32::MAX / 2;
         const ASPIRATION_MIN_DEPTH: u8 = 4;
         const ASPIRATION_INITIAL_DELTA: i32 =
-            NNUE_PAWN_SCALE * PIECE_VALUES[Piece::Pawn as usize] / 4;
+            NNUE_PAWN_SCALE * PIECE_VALUES[Piece::Pawn as usize] / 6;
         const ASPIRATION_MAX_DELTA: i32 = NNUE_PAWN_SCALE * 1000;
 
         if depth < ASPIRATION_MIN_DEPTH || score::mate_in_plies(prev_eval).is_some() {

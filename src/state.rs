@@ -615,8 +615,8 @@ mod tests {
             "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
             // Pawn / rook / queen present
             "8/8/8/8/8/8/P7/K6k w - - 0 1",
-            "8/8/8/8/8/8/8/KR5k w - - 0 1",
-            "8/8/8/8/8/8/8/KQ5k w - - 0 1",
+            "8/8/8/8/8/8/8/KR5k b - - 0 1",
+            "8/8/8/8/8/8/8/KQ5k b - - 0 1",
             // K+B vs K+B with bishops on opposite color complexes (B1 light, C1 dark)
             "7k/8/8/8/8/8/8/KBb5 w - - 0 1",
             // K+N vs K+N — two knights, not a draw
@@ -626,7 +626,7 @@ mod tests {
             // K+B+N vs K — forced win
             "7k/8/8/8/8/8/8/KBN5 w - - 0 1",
             // K+B+B vs K with bishops on opposite colors (A1 dark, B1 light)
-            "7k/8/8/8/8/8/8/BB5K w - - 0 1",
+            "7k/8/8/8/8/8/8/BB5K b - - 0 1",
         ];
         for fen in not_draws {
             assert_insufficient(fen, false);

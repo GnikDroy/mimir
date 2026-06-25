@@ -1,7 +1,7 @@
 //! Static Exchange Evaluation.
 //!
 //! Resolves a capture sequence on a single destination square without a
-//! tree search: walk the [`attackers_to`] bitboard, alternate sides,
+//! tree search: walk the `attackers_to` bitboard, alternate sides,
 //! always recapture with the least valuable attacker, and refresh
 //! X-ray sliders that were hidden behind the attacker that just moved.
 //!

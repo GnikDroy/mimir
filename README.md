@@ -4,20 +4,20 @@ Mimir is a UCI compatible chess engine built from scratch.
 
 ## Features
 
-- Bitboard move generation (legal & pseudo-legal) verified with perft tests.
-- Full compliance of drawing rules: Insufficient material, three-fold-repetition, and 50 move rule.
-- Negamax alpha-beta pruning with iterative deepening depth first search and quiescence search to counter horizon effects.
-- Transposition tables with zobrist hashing.
-- A classical PST tapered evaluation function optimized by Texel's tuning.
-- Modern NNUE based evaluation based on 768 perspective architechture with incremental updates.
-- Move ordering via hash moves from transposition tables, Most Valuable Victim - Least Valuable Aggressor (MVV-LVA) for captures.
-- Killer moves and history heuristics for quiet moves.
-- Principal variation search (PVS) with aspiration windows.
-- Null move pruning (NMP) and Late move reductions (LMR)
-- Reverse Futility Pruning (RFP)
-- Delta pruning and Static Exchange Evaluation (SEE).
-- A UCI compatible interface with a soft-hard limit time scheduler.
-- Playable on lichess [@playmimir](lichess.org/@/playmimir). Uses the lichess bot API. 
+- [x] Bitboard move generation (legal & pseudo-legal) verified with perft tests.
+- [x] Full compliance of drawing rules: Insufficient material, three-fold-repetition, and 50 move rule.
+- [x] Negamax alpha-beta pruning with iterative deepening depth first search and quiescence search to counter horizon effects.
+- [x] Transposition tables with zobrist hashing.
+- [x] A classical PST tapered evaluation function optimized by Texel's tuning.
+- [x] Modern NNUE based evaluation based on 768 perspective architechture with incremental updates.
+- [x] Move ordering via hash moves from transposition tables, Most Valuable Victim - Least Valuable Aggressor (MVV-LVA) for captures.
+- [x] Killer moves and history heuristics for quiet moves.
+- [x] Principal variation search (PVS) with aspiration windows.
+- [x] Null move pruning (NMP) and Late move reductions (LMR)
+- [x] Reverse Futility Pruning (RFP)
+- [x] Delta pruning and Static Exchange Evaluation (SEE).
+- [x] A UCI compatible interface with a soft-hard limit time scheduler.
+- [x] Playable on lichess [@playmimir](www.lichess.org/@/playmimir). Uses the lichess bot API. 
 
 ## Building
 

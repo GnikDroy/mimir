@@ -5,7 +5,7 @@ use crate::bitboard::BitBoardMethods;
 use crate::core::*;
 use crate::state::GameState;
 
-const HIDDEN_SIZE: usize = 64;
+const HIDDEN_SIZE: usize = 512;
 pub const SCALE: i32 = 400;
 const QA: i16 = 255;
 const QB: i16 = 64;
@@ -14,7 +14,7 @@ const QB: i16 = 64;
 pub const NNUE_PAWN_SCALE: i32 = SCALE / 100;
 
 pub static NNUE: Network =
-    unsafe { std::mem::transmute(*include_bytes!("../resources/beans.bin")) };
+    unsafe { std::mem::transmute(*include_bytes!("../resources/mimir-512-v1.bin")) };
 
 #[inline]
 /// Square Clipped ReLU - Activation Function.

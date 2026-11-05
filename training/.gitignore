@@ -1,0 +1,4 @@
+target/
+checkpoints/
+logs/
+Cargo.lock

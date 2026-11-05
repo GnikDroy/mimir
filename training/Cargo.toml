@@ -1,0 +1,17 @@
+[package]
+name = "mimir-train"
+version = "0.1.0"
+edition = "2021"
+
+# Build with: cargo build --release --features cuda
+
+[dependencies]
+bullet = { git = "https://github.com/jw1912/bullet", rev = "da426a49", package = "bullet_lib" }
+
+[features]
+default = []
+cuda = ["bullet/cuda"]
+metal = ["bullet/metal"]
+
+[profile.release]
+lto = true

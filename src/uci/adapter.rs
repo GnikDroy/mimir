@@ -20,7 +20,7 @@ use std::thread;
 
 use crate::bitboard::{BitBoard, BitBoardMethods};
 use crate::core::*;
-use crate::nnue::evaluate;
+use crate::nnue::{evaluate, Cp};
 use crate::search::{SearchResult, Searcher, MAX_PLY};
 use crate::state::GameState;
 
@@ -122,7 +122,7 @@ impl UCIAdapter {
                 let ply_to_mate = ((ply.abs() + 1) / 2) * ply.signum();
                 write!(writer, " score mate {}", ply_to_mate)
             }
-            None => write!(writer, " score cp {}", info.evaluation),
+            None => write!(writer, " score cp {}", Cp::from_internal(info.evaluation)),
         }?;
 
         if !info.pv.is_empty() {
@@ -199,7 +199,13 @@ impl UCIAdapter {
                     Color::Black => "black",
                 };
                 let mut out = self.out.lock().unwrap();
-                writeln!(out, "{} cp ({} to move)", evaluate(&self.state), side).ok();
+                writeln!(
+                    out,
+                    "{} cp ({} to move)",
+                    Cp::from_internal(evaluate(&self.state)),
+                    side
+                )
+                .ok();
             }
             UCICommand::Perft(depth) => {
                 let mut out = self.out.lock().unwrap();
@@ -772,7 +778,7 @@ mod tests {
         let mut pv = crate::search::PvList::default();
         pv.push(mv);
         let info = SearchResult {
-            evaluation: 42,
+            evaluation: crate::nnue::Cp(150).to_internal(),
             analytics: crate::analytics::SearchAnalytics::default(),
             pv,
         };
@@ -784,6 +790,6 @@ mod tests {
         println!("Output: {}", output_str);
         assert!(output_str.contains("info depth"));
         assert!(output_str.contains("pv e2e4"));
-        assert!(output_str.contains("score cp 42"));
+        assert!(output_str.contains("score cp 150"));
     }
 }

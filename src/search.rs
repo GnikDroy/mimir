@@ -7,7 +7,7 @@ use crate::core::*;
 use crate::late_move_reduction_table::reduction;
 use crate::move_score::MoveScore;
 use crate::move_scorer::{MoveScorer, PIECE_VALUES};
-use crate::nnue::{evaluate, NNUE_PAWN_SCALE};
+use crate::nnue::{evaluate, Cp};
 use crate::pv_table::PvTable;
 use crate::score;
 use crate::search_status::SearchStatus;
@@ -298,8 +298,8 @@ impl Searcher {
         const FULL_BETA: i32 = i32::MAX / 2;
         const ASPIRATION_MIN_DEPTH: u8 = 4;
         const ASPIRATION_INITIAL_DELTA: i32 =
-            NNUE_PAWN_SCALE * PIECE_VALUES[Piece::Pawn as usize] / 6;
-        const ASPIRATION_MAX_DELTA: i32 = NNUE_PAWN_SCALE * 1000;
+            Cp(PIECE_VALUES[Piece::Pawn as usize]).to_internal() / 6;
+        const ASPIRATION_MAX_DELTA: i32 = Cp(1000).to_internal();
 
         if depth < ASPIRATION_MIN_DEPTH || score::mate_in_plies(prev_eval).is_some() {
             return self.alpha_beta(state, depth, 0, FULL_ALPHA, FULL_BETA, true);
@@ -452,7 +452,7 @@ impl Searcher {
         // - `depth <= RFP_MAX_DEPTH`: deeper nodes are too unstable for a static cutoff.
         // - `beta` not a mate score: mate-bound comparisons are meaningless.
         const RFP_MAX_DEPTH: u8 = 5;
-        const RFP_MARGIN_PER_DEPTH: i32 = NNUE_PAWN_SCALE * 100;
+        const RFP_MARGIN_PER_DEPTH: i32 = Cp(100).to_internal();
         if ply > 0
             && !is_pv
             && !in_check
@@ -787,7 +787,7 @@ impl Searcher {
         // Move scoring
         buf.score_quiescence();
 
-        const DELTA_MARGIN: i32 = NNUE_PAWN_SCALE * 2 * PIECE_VALUES[Piece::Pawn as usize];
+        const DELTA_MARGIN: i32 = Cp(2 * PIECE_VALUES[Piece::Pawn as usize]).to_internal();
 
         // Eligibility: stand-pat must be valid (not in check) and alpha
         // must not be a mate score (else we could mask a forced tactic).
@@ -801,10 +801,10 @@ impl Searcher {
                 self.analytics.delta_pruning_attempts += 1;
                 let captured = mv
                     .get_captured_piece()
-                    .map_or(0, |p| NNUE_PAWN_SCALE * PIECE_VALUES[p as usize]);
+                    .map_or(0, |p| Cp(PIECE_VALUES[p as usize]).to_internal());
                 let promo_gain = if mv.is_promotion() {
-                    NNUE_PAWN_SCALE
-                        * (PIECE_VALUES[Piece::Queen as usize] - PIECE_VALUES[Piece::Pawn as usize])
+                    Cp(PIECE_VALUES[Piece::Queen as usize] - PIECE_VALUES[Piece::Pawn as usize])
+                        .to_internal()
                 } else {
                     0
                 };

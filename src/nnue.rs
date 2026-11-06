@@ -10,8 +10,29 @@ pub const SCALE: i32 = 400;
 const QA: i16 = 255;
 const QB: i16 = 64;
 
-/// Multiplier from centipawn-style PIECE_VALUES into this network's eval units.
-pub const NNUE_PAWN_SCALE: i32 = SCALE / 100;
+/// Centipawn type
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Cp(pub i32);
+
+impl Cp {
+    /// centipawn to internal nnue eval
+    #[inline(always)]
+    pub const fn to_internal(self) -> i32 {
+        self.0 * SCALE / 100
+    }
+
+    /// internal nnue eval to centipawns
+    #[inline(always)]
+    pub const fn from_internal(internal: i32) -> Self {
+        Cp(internal * 100 / SCALE)
+    }
+}
+
+impl std::fmt::Display for Cp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
 
 pub static NNUE: Network =
     unsafe { std::mem::transmute(*include_bytes!("../resources/mimir-512-v1.bin")) };

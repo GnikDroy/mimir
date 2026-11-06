@@ -52,11 +52,9 @@ pub struct Searcher {
     analytics: SearchAnalytics,
     move_scorer: MoveScorer,
     pv: PvTable<MAX_PLY>,
-    /// External abort signal supplied by the caller at construction.
-    /// The Searcher only reads it; the owner (e.g. the UCI adapter)
-    /// flips it from another thread to interrupt the in-flight search.
-    /// [`Searcher::default`] install a never-flipped
-    /// default for callers that don't need external abort.
+    /// External abort signal. The Searcher only reads it. The owner
+    /// (e.g. the UCI adapter) flips it from another thread to interrupt
+    /// the in-flight search.
     stop: Arc<AtomicBool>,
 }
 
@@ -68,7 +66,7 @@ const QUIESCENCE_NODE_CHECK_INTERVAL: u64 = 128;
 
 impl Searcher {
     /// Builds a [`Searcher`] that consults `stop` between node-interval
-    /// checks. The caller owns the flag; the Searcher only reads it.
+    /// checks. The caller owns the flag. The Searcher only reads it.
     /// Flipping `stop` to `true` from another thread asks the in-flight
     /// search to return [`SearchStatus::Stopped`] at the next check.
     pub fn new(options: EngineOptions, stop: Arc<AtomicBool>) -> Self {
@@ -142,9 +140,8 @@ impl Searcher {
 
             working_state.make_move(mv);
 
-            // TT cycle would loop forever, so we stop on revisit
-            // Also if we have 3 fold repetition from previous hashes, 
-            // then we stop as well.
+            // TT cycle would cause it to loop forever.
+            // Stop on cycle or if we have 3 fold repetition from previous hashes.
             if seen.contains(&working_state.zobrist_hash)
                 || self.is_repetition(working_state.zobrist_hash, working_state.halfmove_clock)
             {
@@ -160,25 +157,18 @@ impl Searcher {
         pv
     }
 
-    /// Detect repetition: returns true if `hash` matches any position
-    /// in `position_history` within reach of the current reversible-move
-    /// window.
+    /// Detect repetition: true if `hash` matches any position in
+    /// `position_history` within the current reversible-move window.
     ///
-    /// Convention: `position_history` contains the parent states leading
-    /// to the current state; the current state's hash is NOT in the
-    /// stack.
+    /// Convention: the stack holds the positions leading to the current
+    /// state. The current state's hash is NOT in it.
     ///
-    /// `halfmove_clock` is a safe upper bound on lookback.
-    /// Captures, pawn moves, castling, and loss of en passant right,
-    /// all alter the zobrist hash in a way no prior position can match.
-    /// So positions before any such move cannot be a repetition.
+    /// `halfmove_clock` bounds the lookback: no position from before the
+    /// last capture or pawn move can repeat. The bound is loose (castling
+    /// and e.p. loss don't reset the clock) but that is harmless.
     ///
-    /// That being said, castling and loss of e.p. square doesn't reset
-    /// `halfmove_clock`, so this bound is loose , but that's harmless.)
-    ///
-    /// Only same-side-to-move positions can match, so we step back by 2.
-    /// The minimum cycle length is 4 plies (each side moves and moves
-    /// back), so the closest viable match is at index `n - 4`.
+    /// Only same-side-to-move positions can match, so step back by 2.
+    /// The shortest cycle is 4 plies, so start at index `n - 4`.
     #[inline]
     fn is_repetition(&self, hash: ZobristHash, halfmove_clock: u8) -> bool {
         let n = self.position_history.len();
@@ -365,7 +355,7 @@ impl Searcher {
         do_null: bool,
     ) -> SearchStatus<(Option<Move>, i32)> {
         // Reset this ply's PV. Early returns (draw, depth==0, TT cutoff) will
-        // leave it empty; the parent then sees an empty child PV and truncates.
+        // leave it empty. The parent then sees an empty child PV and truncates.
         self.pv.clear_ply(ply);
 
         self.analytics.max_ply_reached = self.analytics.max_ply_reached.max(ply as u8);
@@ -430,7 +420,7 @@ impl Searcher {
             self.analytics.transposition_table_hits += 1;
 
             // Skip TT cuts at PV nodes so an Exact/bound entry doesn't
-            // return before the PV row at this ply is populated — that
+            // return before the PV row at this ply is populated. That
             // would truncate the reported PV. The entry's best_move is
             // still consumed below for move ordering.
             if !is_pv {
@@ -467,7 +457,7 @@ impl Searcher {
         //
         // Guards:
         // - `ply > 0`: root must produce a best move.
-        // - `!is_pv`: PV nodes need a real score; the margin heuristic is unsound there.
+        // - `!is_pv`: PV nodes need a real score. The margin heuristic is unsound there.
         // - `!in_check`: static eval is meaningless while the king is under attack.
         // - `depth <= RFP_MAX_DEPTH`: deeper nodes are too unstable for a static cutoff.
         // - `beta` not a mate score: mate-bound comparisons are meaningless.
@@ -534,7 +524,7 @@ impl Searcher {
 
             if null_score >= beta {
                 self.analytics.null_move_cutoffs += 1;
-                // Don't return mate scores from NMP — we never proved a real
+                // Don't return mate scores from NMP. We didn't prove a real
                 // mate exists, only that passing didn't lose.
                 let clamped = if score::mate_in_plies(null_score).is_some() {
                     beta
@@ -552,7 +542,7 @@ impl Searcher {
         buf.score_main(&self.move_scorer, state, tt_move, ply);
 
         // Snapshot the move-ordering signal that depends on the buffer's
-        // contents but not its order — pull it before `ordered()` borrows
+        // contents but not its order, pull it before `ordered()` borrows
         // `buf` mutably.
         let history_top = self.move_scorer.find_history_top(state.side_to_move, &buf);
         let mut history_top_tried = false;
@@ -592,7 +582,7 @@ impl Searcher {
 
                 // Late Move Reductions: search late quiet moves at reduced
                 // depth. The reduced scout's job is to cheaply confirm the
-                // move isn't better than alpha; if it fails high, we
+                // move isn't better than alpha. If it fails high, we
                 // re-search at full depth to verify.
                 const LMR_MIN_DEPTH: u8 = 3;
                 const LMR_MIN_MOVES: usize = 3;
@@ -636,7 +626,7 @@ impl Searcher {
                 }
 
                 // Stage 3: PVS open-window re-search when the score lands
-                // inside (alpha, beta) — only possible at PV nodes.
+                // inside (alpha, beta), only possible at PV nodes.
                 if score > alpha && score < beta {
                     self.analytics.pvs_re_searches += 1;
                     self.position_history.push(state.zobrist_hash);
@@ -689,7 +679,7 @@ impl Searcher {
 
         // Resolve history-top stats once the move loop ends. Only count
         // the node if a top-history move existed (i.e. at least one quiet
-        // move had nonzero history); otherwise the sample is meaningless.
+        // move had nonzero history). Otherwise the sample is meaningless.
         if history_top.is_some() {
             if history_top_tried {
                 self.analytics.history_top_tried += 1;
@@ -759,7 +749,7 @@ impl Searcher {
             }
         }
 
-        // Draw detection (50-move rule and repetition) — cheap and
+        // Draw detection (50-move rule and repetition), cheap and
         // doesn't need generated moves, so do it before movegen.
         // Quiescence is normally only captures (which reset halfmove_clock)
         // but check evasions can include quiet moves, so the check still matters.
@@ -1075,7 +1065,7 @@ mod tests {
     fn test_is_repetition_detects_longer_cycle() {
         // King triangulation: each side returns home after 3 moves (6 plies).
         // Knights can't return in 3 moves (color parity), so we use bare-king
-        // positions — no castling rights or en passant to taint the hash.
+        // positions, no castling rights or en passant to taint the hash.
         let mut state = GameState::from_fen("4k3/8/8/8/8/8/8/4K3 w - - 0 1").unwrap();
         let history = play_moves(
             &mut state,

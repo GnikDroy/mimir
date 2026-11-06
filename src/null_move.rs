@@ -128,7 +128,7 @@ mod tests {
 
     #[test]
     fn test_position_suitable_for_null_move_kp_endgame() {
-        // King and pawns only — zugzwang risk, NMP must be disabled.
+        // King and pawns only, zugzwang risk, NMP must be disabled.
         let state = GameState::from_fen("4k3/p7/8/8/8/8/P7/4K3 w - - 0 1").unwrap();
         assert!(!state.position_suitable_for_null_move());
     }

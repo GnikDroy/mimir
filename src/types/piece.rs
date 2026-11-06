@@ -17,7 +17,7 @@ pub enum Piece {
 }
 
 impl Piece {
-    /// Number of piece kinds; usable as the size of per-piece lookup arrays.
+    /// Number of piece kinds. Usable as the size of per-piece lookup arrays.
     pub const NUM: usize = std::mem::variant_count::<Piece>();
 
     /// Reconstructs a [`Piece`] from its discriminant.
@@ -25,7 +25,7 @@ impl Piece {
     /// # Panics
     ///
     /// In debug builds, panics if `index` is not in `0..NUM`. Release
-    /// builds skip the check; passing an out-of-range value is undefined
+    /// builds skip the check. Passing an out-of-range value is undefined
     /// behaviour.
     #[inline(always)]
     pub fn index(index: u8) -> Self {

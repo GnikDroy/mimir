@@ -1,7 +1,7 @@
 //! PGN (Portable Game Notation) documents.
 //!
-//! Assembles a full PGN document — tag header, SAN move text, move
-//! numbers, and the terminal result token — from either a `&[Move]`
+//! Assembles a full PGN document, tag header, SAN move text, move
+//! numbers, and the terminal result token, from either a `&[Move]`
 //! ([`PGN::from_moves`]) or a UCI movestring ([`PGN::from_uci`]).
 //! Per-move SAN encoding lives in [`crate::notation::san`].
 
@@ -16,7 +16,7 @@ use crate::state::GameState;
 
 /// A rendered PGN document.
 ///
-/// Produced via [`PGN::from_moves`] or [`PGN::from_uci`]; consume via
+/// Produced via [`PGN::from_moves`] or [`PGN::from_uci`]. Consume via
 /// [`Display`] (`println!("{}", pgn)`) or `String::from(pgn)`.
 pub struct PGN {
     document: String,
@@ -133,11 +133,11 @@ impl From<PGN> for String {
 /// shell with `from`, `to`, and (optionally) promotion piece set.
 ///
 /// **Kept as a static cache for performance.** [`PGN::from_uci`]
-/// consults this table once per input token; a `HashMap` lookup is
+/// consults this table once per input token. A `HashMap` lookup is
 /// materially faster than re-parsing the algebraic squares for each
 /// token, especially across long game databases (see
 /// `test_uci_to_pgn_all_carlsen_games`). The stored `Move` only carries
-/// the fields [`PGN::uci_matches`] compares against — piece type and
+/// the fields [`PGN::uci_matches`] compares against, piece type and
 /// move-type flags come from the live legal-move list at lookup time.
 static UCI_MOVE_CACHE: Lazy<HashMap<String, Move>> = Lazy::new(|| {
     #[inline(always)]

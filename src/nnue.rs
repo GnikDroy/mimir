@@ -207,9 +207,8 @@ impl Accumulator {
     }
 }
 
-/// A bias-initialised pair of accumulators, one per perspective
-/// (`[Color::White as usize]` = white-to-move, `[Color::Black as usize]` = black).
-/// Used as the starting point before any piece features are added.
+/// A bias-initialised pair of accumulators, one per perspective.
+/// The starting point before any piece features are added.
 #[inline]
 pub fn empty_accumulators() -> [Accumulator; Color::NUM] {
     [Accumulator::new(&NNUE); Color::NUM]

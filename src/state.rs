@@ -4,12 +4,10 @@
 //! occupancies, side to move, castling rights, en-passant target,
 //! 50-move and full-move clocks, plus a running [`ZobristHash`].
 //!
-//! Moves are applied with [`GameState::make_move`], which returns an
-//! [`UndoInfo`] snapshot of the fields that can't be recovered from the
-//! move alone. Passing the same `(move, undo_info)` pair to
-//! [`GameState::unmake_move`] restores the position byte-for-byte and
-//! reverses every Zobrist XOR — search and perft rely on this exact
-//! symmetry.
+//! [`GameState::make_move`] returns an [`UndoInfo`] snapshot of the
+//! fields that can't be recovered from the move alone. Passing the same
+//! pair to [`GameState::unmake_move`] restores the position exactly.
+//! Search and perft rely on this symmetry.
 //!
 //! `make_move` does not validate legality.
 use crate::attack_table::ATTACK_TABLE;
@@ -58,19 +56,19 @@ pub struct GameState {
     /// bit 0 = white kingside, bit 1 = white queenside,
     /// bit 2 = black kingside, bit 3 = black queenside.
     pub castling_rights: u8,
-    /// Square *behind* a pawn that just made a double push — i.e. the
+    /// Square *behind* a pawn that just made a double push, i.e. the
     /// square an enemy pawn would capture *to* via en passant. [`None`]
     /// when no en-passant capture is currently legal.
     pub en_passant: Option<Square>,
     /// Halfmoves since the last pawn move or capture (50-move rule).
     pub halfmove_clock: u8,
-    /// 1-based fullmove counter; increments after every black move.
+    /// 1-based fullmove counter. Increments after every black move.
     pub fullmove_number: u16,
     /// Incrementally maintained Zobrist key for this position.
     pub zobrist_hash: ZobristHash,
     /// NNUE feature accumulators, one per perspective
     /// (`[Color::White as usize]` = white-to-move, `[Color::Black as usize]` = black).
-    /// Kept up-to-date by `make_move`/`unmake_move`; consumed by [`crate::nnue::evaluate`].
+    /// Kept up-to-date by `make_move`/`unmake_move`. Consumed by [`crate::nnue::evaluate`].
     pub accumulators: [Accumulator; Color::NUM],
 }
 
@@ -212,17 +210,11 @@ impl GameState {
         knights == 0 && (light_bishops == 0 || dark_bishops == 0)
     }
 
-    /// Adds a piece to the board at `sq`.
+    /// Adds a piece to the board at `sq`. `sq_bb` must equal
+    /// `BitBoard::on(sq)` (passed in so callers can reuse it).
     ///
-    /// `sq_bb` must equal `BitBoard::on(sq)`; the caller passes it in
-    /// so it can be reused when the same bitboard is also needed for
-    /// other mutations (e.g. shared `to_board` across a capture victim
-    /// and the moving piece's destination).
-    ///
-    /// Updates per-side `pieces` and `occupancies`, the running Zobrist
-    /// key, and the NNUE accumulators. Does **not** touch
-    /// `occupancies[2]` — `make_move` / `unmake_move` recompute it once
-    /// at the bottom.
+    /// Does **not** touch `occupancies[2]`: make/unmake recompute it
+    /// once at the bottom.
     #[inline(always)]
     fn place_piece(
         &mut self,
@@ -255,16 +247,12 @@ impl GameState {
         nnue::remove_piece(&mut self.accumulators, color, piece, sq);
     }
 
-    /// Moves a piece of `color`/`piece` from `from` to `to`.
+    /// Moves a piece from `from` to `to`. `mask` must equal
+    /// `BitBoard::on(from) | BitBoard::on(to)`.
     ///
-    /// `mask` must equal `BitBoard::on(from) | BitBoard::on(to)`. The
-    /// XOR-based form requires `from` to be set and `to` to be clear
-    /// in `pieces[color][piece]` and `occupancies[color]` at entry —
-    /// i.e. it is the caller's responsibility to remove any enemy
-    /// piece occupying `to` first.
-    ///
-    /// Swapping `from` and `to` reverses a previous `move_piece`
-    /// call exactly (used by [`unmake_move`]).
+    /// The XOR form requires `from` set and `to` clear at entry, so the
+    /// caller must remove any enemy piece on `to` first. Swapping `from`
+    /// and `to` reverses the call exactly (used by [`unmake_move`]).
     #[inline(always)]
     fn move_piece(
         &mut self,
@@ -283,19 +271,12 @@ impl GameState {
         nnue::add_piece(&mut self.accumulators, color, piece, to);
     }
 
-    /// Applies `move_encoded` to the position and returns an
-    /// [`UndoInfo`] that [`unmake_move`](Self::unmake_move) needs to
-    /// reverse it.
+    /// Applies `move_encoded` and returns the [`UndoInfo`] that
+    /// [`unmake_move`](Self::unmake_move) needs to reverse it.
     ///
-    /// Updates bitboards, occupancies, castling rights, en-passant,
-    /// the 50-move and fullmove clocks, side to move, and the Zobrist
-    /// hash incrementally. Handles promotions, normal captures, en
-    /// passant, both castling sides, and rook-capture / king-move
-    /// effects on castling rights.
-    ///
-    /// **Does not validate legality.** The caller is responsible for
-    /// passing a legal/pseudo-legal move and (where required) filtering out
-    /// moves that leave the moving side in check.
+    /// **Does not validate legality.** The caller must pass a legal or
+    /// pseudo-legal move and filter out moves that leave the moving
+    /// side in check.
     pub fn make_move(&mut self, move_encoded: Move) -> UndoInfo {
         let from = move_encoded.get_from();
         let to = move_encoded.get_to();
@@ -464,13 +445,9 @@ impl GameState {
         }
     }
 
-    /// Reverses [`make_move`](Self::make_move) using the [`UndoInfo`]
-    /// it returned. Restores every field including the Zobrist hash to
-    /// byte-equality with the pre-move state.
-    ///
-    /// `move_encoded` and `undo_info` must be the exact pair produced
-    /// by the matching `make_move`; using them out of order or with a
-    /// different move corrupts the position.
+    /// Reverses [`make_move`](Self::make_move). The `(move, undo_info)`
+    /// pair must be exactly what the matching `make_move` produced.
+    /// Using them out of order corrupts the position.
     pub fn unmake_move(&mut self, move_encoded: Move, undo_info: &UndoInfo) {
         let from = move_encoded.get_from();
         let to = move_encoded.get_to();
@@ -532,7 +509,7 @@ impl GameState {
             self.place_piece(enemy_color, captured, to, to_board, &mut key);
         }
 
-        // Handle castling unmake — swap rook back.
+        // Handle castling unmake, swap rook back.
         if move_encoded.is_castle() {
             let (rook_from, rook_to) = match (moving_color, move_encoded.is_kingside_castle()) {
                 (Color::White, true) => (Square::H1, Square::F1),
@@ -619,11 +596,11 @@ mod tests {
             "8/8/8/8/8/8/8/KQ5k b - - 0 1",
             // K+B vs K+B with bishops on opposite color complexes (B1 light, C1 dark)
             "7k/8/8/8/8/8/8/KBb5 w - - 0 1",
-            // K+N vs K+N — two knights, not a draw
+            // K+N vs K+N, two knights, not a draw
             "7k/8/6n1/8/8/8/8/KN6 w - - 0 1",
-            // K+N+N vs K — mate is possible (not forced), not a draw here
+            // K+N+N vs K, mate is possible (not forced), not a draw here
             "7k/8/8/8/8/8/8/KNN5 w - - 0 1",
-            // K+B+N vs K — forced win
+            // K+B+N vs K, forced win
             "7k/8/8/8/8/8/8/KBN5 w - - 0 1",
             // K+B+B vs K with bishops on opposite colors (A1 dark, B1 light)
             "7k/8/8/8/8/8/8/BB5K b - - 0 1",

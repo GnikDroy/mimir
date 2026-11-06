@@ -1,40 +1,29 @@
 //! Time management for the iterative-deepening search.
 //!
-//! [`TimeControl`] tracks both the UCI clock state (per-side remaining
-//! time, increments, `movestogo`, fixed `movetime`) and the live
-//! search window. The search keeps two deadlines: a **soft** deadline
-//! checked between iterative-deepening iterations, and a **hard**
-//! deadline checked inside the tree every N nodes.
+//! [`TimeControl`] tracks the UCI clock state and the live search
+//! window. The search keeps two deadlines:
 //!
-//! - Don't *start* a new iteration past the soft deadline.
-//! - Do abort mid-iteration once we cross the hard deadline.
+//! - **soft**: don't *start* a new iterative-deepening iteration past it.
+//! - **hard**: abort mid-iteration once crossed (checked every N nodes).
 //!
-//! The base budget is `remaining / movestogo + inc / 2`, minus a
-//! small safety buffer. Soft is `base / SOFT_DIVISOR`, hard is `base`.
-//! `SOFT_DIVISOR` tracks the effective branching factor — see
+//! Base budget is `remaining / movestogo + inc / 2` minus a safety
+//! buffer. Soft is `base / SOFT_DIVISOR`, hard is `base`. See
 //! [Chess Programming Wiki](https://www.chessprogramming.org/Time_Management).
 
 use std::time::{Duration, Instant};
 
 use crate::core::Color;
 
-/// Soft-deadline divisor — soft fires at `base_budget / SOFT_DIVISOR`.
+/// Soft-deadline divisor, soft fires at `base_budget / SOFT_DIVISOR`.
 /// Picked to roughly match the effective branching factor.
 const SOFT_DIVISOR: u32 = 3;
 
 /// UCI clock state plus the current search deadlines.
 ///
-/// Clock fields (`wtime`/`btime`/`winc`/`binc`/`movestogo`/`move_time`)
-/// are refreshed per `go` command via
-/// [`update_clock`](Self::update_clock).
-/// Multiple timing fields may be present at once; the budget takes the
-/// *strictest* (smallest) of the resulting candidates.
-///
-/// `search_start`, `soft_deadline`, and `hard_deadline` are managed by
-/// [`set_search_deadline`](Self::set_search_deadline) and
-/// [`clear_search_deadline`](Self::clear_search_deadline); they are
-/// `None` outside an active search. `None` deadlines during an active
-/// search mean no time bound (search runs to depth or until `stop`).
+/// Clock fields are refreshed per `go` command via
+/// [`update_clock`](Self::update_clock). When several timing fields are
+/// present, the budget takes the strictest. `None` deadlines during an
+/// active search mean no time bound (run to depth or until `stop`).
 #[derive(Debug, Clone, Copy)]
 pub struct TimeControl {
     /// White's remaining time on the live clock.
@@ -47,7 +36,7 @@ pub struct TimeControl {
     pub binc: Option<Duration>,
     /// Moves remaining until the next time control, if specified.
     pub movestogo: Option<u32>,
-    /// Fixed per-move time override (`go movetime`); when set, replaces
+    /// Fixed per-move time override (`go movetime`). When set, replaces
     /// the computed budget entirely and collapses soft and hard.
     pub move_time: Option<Duration>,
     /// Safety buffer subtracted from each candidate budget to cover UCI
@@ -106,15 +95,12 @@ impl TimeControl {
 
     /// Computes the `(soft, hard)` budgets for this move.
     ///
-    /// Hard is the strictest `move_time` (`remaining/movestogo + inc/2`),
-    /// minus the safety buffer.
+    /// Hard is the strictest candidate minus the safety buffer. Soft is
+    /// `hard / SOFT_DIVISOR`, except under `go movetime` where soft
+    /// collapses to hard so the given time is used exactly.
     ///
-    /// Soft is `hard / SOFT_DIVISOR`. This is the threshold for *starting* a
-    /// new iterative-deepening iteration. When `move_time` is used,
-    /// soft collapses to hard so `go movetime` is accurate.
-    ///
-    /// Returns `None` when no timing field was supplied.
-    /// In that case, search will run to depth or until `stop`.
+    /// Returns `None` when no timing field was supplied (run to depth
+    /// or until `stop`).
     fn move_time_budget(&self, side_to_move: Color) -> Option<(Duration, Duration)> {
         let (remaining, increment) = match side_to_move {
             Color::White => (self.wtime, self.winc),
@@ -146,8 +132,7 @@ impl TimeControl {
     }
 
     /// Starts a new search window: stamps the start instant and computes
-    /// both deadlines from the current clock state. `None` deadlines
-    /// mean no time bound was supplied; and the search runs to depth.
+    /// both deadlines from the current clock state.
     pub fn set_search_deadline(&mut self, side_to_move: Color) {
         let now = Instant::now();
         self.search_start = Some(now);
@@ -245,7 +230,7 @@ mod tests {
             Some(Duration::from_millis(1000)),
         );
         let (soft, hard) = tc.move_time_budget(Color::White).unwrap();
-        // Both should be movetime − overhead = 950ms.
+        // Both should be movetime - overhead = 950ms.
         assert_eq!(hard, Duration::from_millis(950));
         assert_eq!(soft, Duration::from_millis(950));
     }
@@ -261,7 +246,7 @@ mod tests {
             None,
             Some(Duration::from_millis(500)),
         );
-        // clock_budget = 600s/20 = 30s; movetime = 500ms is the strictest.
+        // clock_budget = 600s/20 = 30s. Movetime = 500ms is the strictest.
         let (soft, hard) = tc.move_time_budget(Color::White).unwrap();
         assert_eq!(hard, Duration::from_millis(500));
         assert_eq!(soft, Duration::from_millis(500));
@@ -289,7 +274,7 @@ mod tests {
             None,
         );
         let (soft, hard) = tc.move_time_budget(Color::White).unwrap();
-        // base = 100/20 = 5ms; overhead 500ms saturates to 0.
+        // base = 100/20 = 5ms. Overhead 500ms saturates to 0.
         assert_eq!(hard, Duration::ZERO);
         assert_eq!(soft, Duration::ZERO);
     }

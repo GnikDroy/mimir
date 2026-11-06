@@ -1,12 +1,10 @@
 //! Zobrist hashing for [`GameState`].
 //!
 //! Each game-state feature (piece-on-square, side to move, castling
-//! rights, en passant file) maps to a random 64-bit key generated once
-//! at startup. The position hash is the XOR of every active key.
-//! Because XOR is its own inverse, [`GameState::make_move`] and
-//! [`GameState::unmake_move`] can keep the hash current incrementally
-//! by XOR-ing out the keys for departing features and XOR-ing in the
-//! keys for arriving ones — far cheaper than recomputing from scratch.
+//! rights, en passant file) maps to a random 64-bit key. The position
+//! hash is the XOR of every active key. Since XOR is its own inverse,
+//! make/unmake keep the hash current by XOR-ing keys in and out,
+//! far cheaper than recomputing from scratch.
 //!
 //! En passant is keyed by *file* only (not full square), matching the
 //! standard Polyglot convention.
@@ -21,16 +19,15 @@ pub type ZobristHash = u64;
 /// Random key tables for every feature that contributes to the
 /// position hash.
 pub struct ZobristHasher {
-    /// `square[color][piece][square]` — key for a piece of that color
+    /// `square[color][piece][square]`, key for a piece of that color
     /// sitting on that square.
     pub square: [[[ZobristHash; Square::NUM]; Piece::NUM]; Color::NUM],
-    /// XORed in when black is to move; absent when white is to move.
+    /// XORed in when black is to move. Absent when white is to move.
     pub side_is_black: ZobristHash,
-    /// Indexed by the 4-bit packed castling-rights mask
-    /// (`KQkq` = `0b1111`). All 16 combinations are pre-generated so
-    /// updates are a single lookup + XOR.
+    /// Indexed by the 4-bit castling-rights mask (`KQkq` = `0b1111`).
+    /// All 16 combinations pre-generated: updates are one lookup + XOR.
     pub castling_rights: [ZobristHash; 16],
-    /// One key per square (indexed by file; only the file of the en
+    /// One key per square (indexed by file, only the file of the en
     /// passant target square matters).
     pub en_passant: [ZobristHash; Square::NUM],
 }

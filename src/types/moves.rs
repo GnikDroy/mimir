@@ -149,7 +149,7 @@ pub trait MoveMethods {
     /// Builds a queenside castle move.
     fn from_queenside_castle(from: Square, to: Square) -> Self;
 
-    /// Builds a capture. Set `enpassant` for the special pawn capture; the
+    /// Builds a capture. Set `enpassant` for the special pawn capture. The
     /// `captured` piece in that case is the pawn being removed (not the
     /// piece on `to`).
     fn from_capture(

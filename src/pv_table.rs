@@ -1,13 +1,9 @@
 //! Triangular principal-variation table.
 //!
-//! At each ply the search records the best line discovered so far in a row
-//! of moves. [`update`](PvTable::update) writes a new best move into the
-//! row and copies the child ply's row in after it; the root PV is read
-//! from row 0 via [`root`](PvTable::root).
-//!
-//! Move storage and per-row lengths are kept as parallel arrays so the
-//! move grid stays contiguous: `update` does the row copy with a single
-//! `copy_from_slice`, and `clear` only has to wipe the length array.
+//! Each ply records its best line in a row of moves.
+//! [`update`](PvTable::update) writes a new best move and copies the
+//! child ply's row in after it. The root PV is read from row 0 via
+//! [`root`](PvTable::root).
 
 use crate::core::Move;
 
@@ -24,7 +20,7 @@ impl<const N: usize> PvTable<N> {
         }
     }
 
-    /// Drop every row's recorded PV. The move array isn't touched —
+    /// Drop every row's recorded PV. The move array isn't touched.
     /// `length` controls which slots are read.
     pub fn clear(&mut self) {
         self.length.fill(0);

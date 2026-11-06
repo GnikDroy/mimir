@@ -22,7 +22,7 @@ const DIV: f64 = 2.25;
 /// Range-reduces via `x = 2^k * m` with `m ∈ [1, 2)`, then evaluates
 /// `ln(m) = 2 * atanh((m-1)/(m+1))` as a 5-term odd-power series. The
 /// substitution variable `u = (m-1)/(m+1)` lies in `[0, 1/3)`, so the
-/// remainder term `u^11 / 11 < 4e-8` — comfortably below any rounding
+/// remainder term `u^11 / 11 < 4e-8`, comfortably below any rounding
 /// step of the `u8` reduction table.
 const fn ln_approx(x: usize) -> f64 {
     if x <= 1 {

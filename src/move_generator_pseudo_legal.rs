@@ -64,7 +64,7 @@ impl GameState {
 
     /// Pseudo-legal moves for the side to move: every move that obeys
     /// piece geometry, captures, and friendly blockers. Moves that leave
-    /// the king in check are **not** filtered out — callers must do that
+    /// the king in check are **not** filtered out, callers must do that
     /// themselves, or use [`Self::generate_moves`].
     pub fn generate_moves_pseudo_legal(&self, moves: &mut MoveList) {
         let friendly = self.occupancies[self.side_to_move as usize];

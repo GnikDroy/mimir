@@ -1,6 +1,6 @@
 //! Aggregated counters and timings collected during a single search.
 //!
-//! Populated incrementally inside [`crate::search::Searcher`]; consumed
+//! Populated incrementally inside [`crate::search::Searcher`]. Consumed
 //! by the UCI adapter for `info` lines and by debug callers via
 //! [`SearchAnalytics::print`].
 
@@ -10,16 +10,14 @@ use std::time::Duration;
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SearchAnalytics {
     pub depth: u8,
-    /// Deepest ply reached from the root, including any quiescence
-    /// extension. (Renamed from `max_quiescence_depth_reached` — the
-    /// stored value is the absolute ply, not the depth into quiescence.)
+    /// Deepest ply reached from the root, including quiescence.
     pub max_ply_reached: u8,
     pub elapsed: Duration,
     pub nodes_searched: u64,
     pub quiescence_nodes_searched: u64,
     pub alpha_beta_cutoffs: u64,
     /// Move-loop beta cutoffs inside quiescence (after make_move).
-    /// Does NOT include stand-pat — see `quiescence_stand_pat_cutoffs`.
+    /// Does NOT include stand-pat, see `quiescence_stand_pat_cutoffs`.
     pub quiescence_alpha_beta_cutoffs: u64,
     /// Times qsearch computed `stand_pat` and tested it against beta.
     /// Equal to the non-check qsearch nodes: stand-pat needs a valid
@@ -30,7 +28,7 @@ pub struct SearchAnalytics {
     /// good as the current bound and we skip generating recaptures.
     pub quiescence_stand_pat_cutoffs: u64,
     /// Times the delta pruning gate ran on a move inside the qsearch
-    /// move loop — i.e., a move scored against `delta_baseline` (not in
+    /// move loop, i.e., a move scored against `delta_baseline` (not in
     /// check, alpha not a mate score).
     pub delta_pruning_attempts: u64,
     /// Subset of `delta_pruning_attempts` where the stand-pat plus the
@@ -59,7 +57,7 @@ pub struct SearchAnalytics {
     /// Subset of `pvs_scouts` taken when the window was still open
     /// (`beta > alpha + 1`). At a non-PV node, `beta = alpha + 1` on
     /// entry and the re-search condition `scout > alpha && scout < beta`
-    /// is mathematically impossible — those scouts are eligibility-zero
+    /// is mathematically impossible, those scouts are eligibility-zero
     /// and shouldn't dilute the re-search rate.
     pub pvs_open_window_scouts: u64,
     pub pvs_re_searches: u64,
@@ -77,7 +75,7 @@ pub struct SearchAnalytics {
     pub aspiration_attempts: u64,
     /// Re-searches caused by the root score falling at or below the
     /// window's alpha. Counted once per failing iteration, not per
-    /// iteration — a single iteration can fail-low multiple times.
+    /// iteration, a single iteration can fail-low multiple times.
     pub aspiration_fail_low: u64,
     /// Re-searches caused by the root score meeting or exceeding the
     /// window's beta. Counted per failing search, like `aspiration_fail_low`.
@@ -86,7 +84,7 @@ pub struct SearchAnalytics {
     /// table returned a nonzero reduction).
     pub lmr_attempts: u64,
     /// Subset of `lmr_attempts` where the reduced search confirmed the move
-    /// wasn't better than alpha — the reduction held, no re-search needed.
+    /// wasn't better than alpha, the reduction held, no re-search needed.
     pub lmr_successes: u64,
     /// Subset of `lmr_attempts` where the reduced scout failed high and we
     /// re-searched at full depth.
@@ -148,9 +146,7 @@ fn with_commas(n: u64) -> String {
     out
 }
 
-/// Width reserved for the label column in the multi-line Display layout.
-/// Picked to leave a ~3-character gap after the longest label
-/// (`Transposition table entries found:`).
+/// Label column width in the Display layout. Fits the longest label.
 const LABEL_WIDTH: usize = 38;
 
 impl fmt::Display for SearchAnalytics {

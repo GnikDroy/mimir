@@ -1,7 +1,7 @@
 //! Score-encoding conventions shared by search, TT, and evaluation.
 //!
 //! Mate scores are encoded as `MATE_SCORE - distance_to_mate`. Inside the
-//! search the distance is measured from the root; in the TT it must be
+//! search the distance is measured from the root. In the TT it must be
 //! relative to the storing node, since the same position can be re-entered
 //! at different plies. [`encode_tt_score`] / [`decode_tt_score`] are the
 //! round-trip across that boundary.
@@ -52,7 +52,7 @@ pub fn decode_tt_score(score: i32, ply: usize) -> i32 {
     }
 }
 
-/// Signed ply distance to mate (positive: side-to-move mates; negative:
+/// Signed ply distance to mate (positive: side-to-move mates, negative:
 /// side-to-move gets mated). `None` for non-mate scores.
 pub fn mate_in_plies(score: i32) -> Option<i32> {
     let ply = MATE_SCORE - score.abs();

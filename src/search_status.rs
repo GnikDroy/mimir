@@ -1,12 +1,10 @@
 //! Outcome of a search call.
 //!
-//! [`SearchStatus`] distinguishes a search that returned a value from
-//! two abort causes: an external `stop` request and a time-control
-//! deadline. The variants are kept separate so callers (UCI layer,
-//! iterative deepening) can report and react appropriately.
+//! [`SearchStatus`] distinguishes a completed search from two abort
+//! causes: an external `stop` and a time-control deadline.
 //!
-//! The `?` operator is supported via [`Try`] so search
-//! internals can propagate abort reasons without boilerplate.
+//! The `?` operator is supported via [`Try`] so search internals can
+//! propagate abort reasons without boilerplate.
 use std::convert::Infallible;
 use std::ops::{ControlFlow, FromResidual, Residual, Try};
 
@@ -58,7 +56,7 @@ impl<T> FromResidual<SearchStatus<Infallible>> for SearchStatus<T> {
         match residual {
             SearchStatus::Stopped => SearchStatus::Stopped,
             SearchStatus::TimedOut => SearchStatus::TimedOut,
-            // `Infallible` has no inhabitants — `Complete` is unreachable.
+            // `Infallible` has no inhabitants, `Complete` is unreachable.
             SearchStatus::Complete(never) => match never {},
         }
     }

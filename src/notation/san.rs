@@ -5,13 +5,13 @@
 //!
 //! Conventions implemented here:
 //! - Pawn moves use file-letter capture prefix (`exd5`) and `=Q`-style
-//!   promotion suffix; non-pawn moves use the piece letter plus the
+//!   promotion suffix. Non-pawn moves use the piece letter plus the
 //!   minimum disambiguator (file, rank, or both) needed to identify
 //!   the origin square against all same-type peers that could legally
 //!   reach the destination.
 //! - Castling is rendered as `O-O` / `O-O-O`.
 //! - Only check (`+`) and checkmate (`#`) annotations are emitted;
-//!   subjective marks (`!`, `?`, `!?`, …) are not.
+//!   subjective marks (`!`, `?`, `!?`, ...) are not.
 
 use std::ops::Deref;
 
@@ -23,7 +23,7 @@ use crate::state::GameState;
 ///
 /// Each entry is one move's SAN string (with check annotation).
 /// Derefs to `[String]`, so all slice methods (`iter`, `len`,
-/// `is_empty`, indexing, …) are available directly.
+/// `is_empty`, indexing, ...) are available directly.
 pub struct SAN {
     moves: Vec<String>,
 }

@@ -26,7 +26,7 @@ impl File {
     /// # Panics
     ///
     /// In debug builds, panics if `index` is not in `0..NUM`. Release
-    /// builds skip the check; passing an out-of-range value is undefined
+    /// builds skip the check. Passing an out-of-range value is undefined
     /// behaviour.
     #[inline(always)]
     pub fn index(index: usize) -> Self {

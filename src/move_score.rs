@@ -1,10 +1,9 @@
 //! Per-node scored move buffer used by the search.
 //!
-//! [`MoveScore`] pairs a [`MoveList`] with one score per slot, kept aligned
-//! by every mutation path. Populate via [`MoveScore::moves_mut`], score with
-//! [`MoveScore::score_main`] / [`MoveScore::score_quiescence`], then iterate
-//! descending with [`MoveScore::ordered`]. Scoring policy (killers, history,
-//! MVV-LVA) lives on [`MoveScorer`].
+//! [`MoveScore`] pairs a [`MoveList`] with one score per slot. Populate
+//! via [`moves_mut`](MoveScore::moves_mut), score, then iterate in
+//! descending order with [`ordered`](MoveScore::ordered). Scoring policy
+//! lives on [`MoveScorer`].
 
 use std::iter::FusedIterator;
 use std::ops::Deref;
@@ -37,7 +36,7 @@ impl MoveScore {
 
     /// Mutable handle to the move buffer for population and filtering,
     /// used before scoring. Scores are (re)built by `score_main` /
-    /// `score_quiescence`; descending iteration goes through `ordered`.
+    /// `score_quiescence`. Descending iteration goes through `ordered`.
     #[inline(always)]
     pub fn moves_mut(&mut self) -> &mut MoveList {
         &mut self.moves

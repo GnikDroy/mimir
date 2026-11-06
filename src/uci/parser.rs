@@ -1,13 +1,8 @@
 //! Parser for UCI (Universal Chess Interface) commands.
 //!
-//! This module turns raw text lines from a GUI or test harness into the
-//! strongly typed [`UCICommand`] variants consumed by
-//! [`crate::uci::adapter`]. Parsing is intentionally permissive: unknown
-//! tokens inside otherwise well-formed commands are skipped rather than
-//! rejected, and any unrecognized input becomes [`UCICommand::Unknown`]
-//! so the runtime loop can decide how to respond. This is per the UCI spec.
-//!
-//! See the UCI protocol specification for the canonical command grammar.
+//! Turns raw text lines into typed [`UCICommand`] values. Parsing is
+//! intentionally permissive per the UCI spec: unknown tokens are
+//! skipped, and unrecognized input becomes [`UCICommand::Unknown`].
 
 use std::io::BufRead;
 use std::time::Duration;
@@ -36,7 +31,7 @@ pub struct GoCommand {
     pub binc: Option<Duration>,
     /// Moves remaining until the next time control (`go movestogo N`).
     pub movestogo: Option<u32>,
-    /// `true` when the GUI sent `go infinite`; search runs until `stop`.
+    /// `true` when the GUI sent `go infinite`. Search runs until `stop`.
     pub infinite: bool,
 }
 
@@ -65,15 +60,15 @@ impl GoCommand {
 /// without aborting the protocol loop.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UCICommand {
-    /// `uci` — handshake request; engine should reply with `id`/`uciok`.
+    /// `uci`, handshake request. Engine should reply with `id`/`uciok`.
     Uci,
-    /// `isready` — engine should reply `readyok` when idle.
+    /// `isready`, engine should reply `readyok` when idle.
     IsReady,
-    /// `ucinewgame` — clear per-game state (e.g. transposition table).
+    /// `ucinewgame`, clear per-game state (e.g. transposition table).
     UciNewGame,
     /// `position [startpos | fen <fen>] [moves <m1> <m2> ...]`.
     ///
-    /// `fen` is [`None`] when `startpos` was used; otherwise it holds the
+    /// `fen` is [`None`] when `startpos` was used. Otherwise it holds the
     /// six space-separated FEN fields rejoined into a single string.
     /// `moves` are UCI long-algebraic strings to apply on top.
     Position {
@@ -82,29 +77,29 @@ pub enum UCICommand {
         /// UCI moves to apply after loading the position.
         moves: Vec<String>,
     },
-    /// `go ...` — start searching with the parameters in [`GoCommand`].
+    /// `go ...`, start searching with the parameters in [`GoCommand`].
     Go(GoCommand),
-    /// `stop` — terminate the current search as soon as possible.
+    /// `stop`, terminate the current search as soon as possible.
     Stop,
-    /// `ponderhit` — the opponent played the predicted move while pondering.
+    /// `ponderhit`, the opponent played the predicted move while pondering.
     PonderHit,
     /// `setoption name <name> [value <value>]`.
     ///
     /// Multi-word names and values are preserved verbatim with single
     /// spaces between tokens.
     SetOption {
-        /// Option name; may contain spaces.
+        /// Option name. May contain spaces.
         name: String,
         /// Option value, or [`None`] for value-less options.
         value: Option<String>,
     },
-    /// `quit` — exit the engine.
+    /// `quit`, exit the engine.
     Quit,
-    /// `display` — non-standard extension; print the current board.
+    /// `display`, non-standard extension. Print the current board.
     Display,
-    /// `eval` — non-standard extension; print the static evaluation.
+    /// `eval`, non-standard extension. Print the static evaluation.
     Eval,
-    /// `perft <depth>` — non-standard extension; print perft divide.
+    /// `perft <depth>`, non-standard extension. Print perft divide.
     Perft(u8),
     /// Any input that did not parse as a known command. The wrapped
     /// string is the offending line (or a short tag identifying which
@@ -201,7 +196,7 @@ impl UCICommand {
 
     /// Parses the tail of a `go` command into a [`GoCommand`].
     ///
-    /// Sub-tokens are scanned in order; unknown tokens and unparseable
+    /// Sub-tokens are scanned in order. Unknown tokens and unparseable
     /// numeric values are silently ignored, leaving the corresponding
     /// field at its default. `depth` is parsed as [`u8`], `movestogo` as
     /// [`u32`], and all time-related fields as milliseconds converted to
@@ -257,7 +252,7 @@ impl UCICommand {
     /// Parses the tail of a `setoption` command.
     ///
     /// The grammar is `name <name tokens...> [value <value tokens...>]`.
-    /// Name and value may contain spaces; tokens are rejoined with a
+    /// Name and value may contain spaces. Tokens are rejoined with a
     /// single space. A missing leading `name` keyword yields
     /// [`UCICommand::Unknown`]. If `value` is absent the value field is
     /// [`None`].

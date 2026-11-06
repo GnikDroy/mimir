@@ -1,24 +1,21 @@
 //! Configurable engine options exposed over UCI.
 //!
-//! [`EngineOptions`] is the engine-wide settings struct: the UCI layer
-//! advertises each field as a `setoption` parameter during the `uci`
-//! handshake and mutates them when the GUI sends `setoption name <...>`.
-//! Other modules read the current values when they construct dependent
-//! components (transposition table, time control, ...).
+//! [`EngineOptions`] holds the engine-wide settings. The UCI layer
+//! advertises each field during the handshake and mutates it on
+//! `setoption`.
 //!
-//! Option names are matched case-insensitively to match common GUI
-//! behavior; unknown names and out-of-range values are silently ignored
-//! per the UCI spec.
+//! Names match case-insensitively. Unknown names and out-of-range
+//! values are silently ignored per the UCI spec.
 
 use std::io::{self, Write};
 use std::time::Duration;
 
-/// `Hash` (MB) — transposition table size advertised to the GUI.
+/// `Hash` (MB), transposition table size advertised to the GUI.
 pub const HASH_DEFAULT_MB: usize = 32;
 pub const HASH_MIN_MB: usize = 1;
 pub const HASH_MAX_MB: usize = 4096;
 
-/// `Move Overhead` (ms) — safety buffer subtracted from each move's
+/// `Move Overhead` (ms), safety buffer subtracted from each move's
 /// time budget to absorb UCI / GUI round-trip latency.
 pub const MOVE_OVERHEAD_DEFAULT_MS: u64 = 10;
 pub const MOVE_OVERHEAD_MIN_MS: u64 = 0;

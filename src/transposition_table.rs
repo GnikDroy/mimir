@@ -1,10 +1,8 @@
 //! Transposition table for caching search results keyed by Zobrist hash.
 //!
-//! The table is a fixed-size, power-of-two array of entry slots indexed by the
-//! low bits of the Zobrist key. Collisions are resolved by a depth-preferred
-//! replacement policy: a new entry overwrites an existing one unless the
-//! existing entry is for the same position and was searched to a greater
-//! depth.
+//! Fixed-size array of slots. Replacement is depth-preferred: a new
+//! entry overwrites unless the slot holds the same position searched
+//! to a greater depth.
 
 use crate::core::Move;
 
@@ -21,12 +19,9 @@ pub enum TranspositionFlag {
 }
 
 /// A single transposition table record.
-///
-/// `key` is the full Zobrist hash and is checked on probe to guard against
-/// index aliasing between distinct positions that collide on the same slot.
 #[derive(Debug, Clone, Copy)]
 pub struct TranspositionEntry {
-    /// Full Zobrist key of the position; used to verify slot ownership.
+    /// Full Zobrist key of the position. Used to verify slot ownership.
     pub key: u64,
     /// Depth (in plies) to which this position was searched.
     pub depth: u8,
@@ -39,9 +34,6 @@ pub struct TranspositionEntry {
 }
 
 /// Direct-mapped transposition table with depth-preferred replacement.
-///
-/// Capacity is always a power of two so that indexing reduces to a bitwise
-/// mask on the Zobrist key.
 pub struct TranspositionTable {
     entries: Vec<Option<TranspositionEntry>>,
 }
@@ -68,9 +60,8 @@ impl TranspositionTable {
         *self = Self::with_size_mb(size_mb);
     }
 
-    /// Creates a table with the given number of slots. `capacity` may be
-    /// any positive value; the indexing scheme uses a multiplication-based
-    /// map and does not require a power of two.
+    /// Creates a table with the given number of slots. Any positive
+    /// `capacity` works: indexing is multiplication-based, not a mask.
     pub fn with_capacity(capacity: usize) -> Self {
         assert!(capacity > 0);
 
@@ -92,16 +83,14 @@ impl TranspositionTable {
         self.entries.fill(None);
     }
 
-    /// Looks up `key` in its mapped slot. Returns `Some` only when the slot
-    /// is occupied **and** the stored entry's full key matches, ruling out
-    /// index aliasing between distinct positions.
+    /// Looks up `key`. Returns `Some` only when the slot is occupied and
+    /// the full key matches, so slot collisions never alias positions.
     pub fn probe(&self, key: u64) -> Option<TranspositionEntry> {
         self.entries[self.index(key)].filter(|entry| entry.key == key)
     }
 
-    /// Inserts `entry`, preserving any existing entry for the same key that
-    /// was searched to a strictly greater depth. All other cases (empty
-    /// slot, different key, equal-or-shallower same-key entry) overwrite.
+    /// Inserts `entry`. Keeps an existing same-key entry searched to a
+    /// strictly greater depth. Every other case overwrites.
     pub fn store(&mut self, entry: TranspositionEntry) {
         let index = self.index(entry.key);
 
@@ -111,9 +100,8 @@ impl TranspositionTable {
         }
     }
 
-    /// Reports the UCI `hashfull` value: the fraction of occupied slots in
-    /// the first `SAMPLE_SIZE` entries scaled to the 0-1000 permill range.
-    /// Sampling a fixed prefix keeps the call O(1) regardless of table size.
+    /// Reports the UCI `hashfull` permill (0-1000), estimated from a
+    /// fixed-size sample prefix so the call stays O(1).
     pub fn hashfull(&self) -> u32 {
         const SAMPLE_SIZE: usize = 3000;
         const PERMILL_SCALE: usize = 1000;

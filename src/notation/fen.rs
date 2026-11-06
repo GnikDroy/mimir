@@ -7,7 +7,7 @@
 //! usable by the transposition table and repetition detection.
 //!
 //! Castling rights are packed into a 4-bit field with the convention
-//! `K=0b0001`, `Q=0b0010`, `k=0b0100`, `q=0b1000` — matching the layout
+//! `K=0b0001`, `Q=0b0010`, `k=0b0100`, `q=0b1000`, matching the layout
 //! that [`crate::state`] uses everywhere else.
 
 use std::fmt::Display;
@@ -21,7 +21,7 @@ use crate::zobrist::ZOBRIST_HASHER;
 impl GameState {
     /// Parses a FEN string into a [`GameState`].
     ///
-    /// All six FEN fields are required; missing or extra
+    /// All six FEN fields are required. Missing or extra
     /// whitespace-separated tokens fail with an `Err`.
     ///
     /// The Zobrist hash is rebuilt at the end so the returned state is

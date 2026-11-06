@@ -2,18 +2,18 @@
 //!
 //! EPD encodes a position plus a list of `opcode operand;` operations.
 //! The first four whitespace-separated tokens are the position fields
-//! (board, side-to-move, castling, en-passant); unlike FEN there is no
-//! halfmove clock or fullmove number in the position itself — they are
+//! (board, side-to-move, castling, en-passant). Unlike FEN there is no
+//! halfmove clock or fullmove number in the position itself, they are
 //! carried by the `hmvc` and `fmvn` operations and default to 0 / 1.
 //!
 //! Only the operations the engine consumes are interpreted:
-//! - `id "..."` — test/position identifier
-//! - `bm <san> [<san> ...]` — best move(s), with trailing `+`/`#`
+//! - `id "..."`, test/position identifier
+//! - `bm <san> [<san> ...]`, best move(s), with trailing `+`/`#`
 //!   check/mate markers stripped
-//! - `hmvc <n>` — halfmove clock override
-//! - `fmvn <n>` — fullmove number override
+//! - `hmvc <n>`, halfmove clock override
+//! - `fmvn <n>`, fullmove number override
 //!
-//! All other opcodes (`ce`, `acd`, `pv`, …) are accepted but ignored.
+//! All other opcodes (`ce`, `acd`, `pv`, ...) are accepted but ignored.
 
 use crate::state::*;
 
@@ -143,7 +143,7 @@ fn split_operations(s: &str) -> Result<Vec<String>, String> {
 }
 
 /// Strips a single matched pair of surrounding `"` or `'` quotes, if
-/// present; returns `s` unchanged otherwise.
+/// present. Returns `s` unchanged otherwise.
 fn strip_quotes(s: &str) -> &str {
     let bytes = s.as_bytes();
     if bytes.len() >= 2 {

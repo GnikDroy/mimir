@@ -9,7 +9,7 @@ pub enum Color {
 }
 
 impl Color {
-    /// Number of variants; usable as the size of per-colour lookup arrays.
+    /// Number of variants. Usable as the size of per-colour lookup arrays.
     pub const NUM: usize = std::mem::variant_count::<Color>();
 
     /// Reconstructs a [`Color`] from its discriminant.
@@ -17,7 +17,7 @@ impl Color {
     /// # Panics
     ///
     /// In debug builds, panics if `index` is not in `0..NUM`. Release
-    /// builds skip the check; passing an out-of-range value is undefined
+    /// builds skip the check. Passing an out-of-range value is undefined
     /// behaviour.
     #[inline(always)]
     pub fn index(index: usize) -> Self {

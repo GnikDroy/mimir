@@ -10,13 +10,13 @@ use crate::state::GameState;
 /// Number of killer moves per ply.
 const KILLER_MOVES_PER_PLY: usize = 2;
 
-/// History cap; keeps `history_bonus` just under `KILLER_BONUS`.
+/// History cap. Keeps `history_bonus` just under `KILLER_BONUS`.
 const HISTORY_MAX: u32 = 8 * 8_000;
 
 /// Depth squared multipler constant
 const HISTORY_BONUS_MULTIPLIER: u32 = 8;
 
-/// TT move; dominates all other ordering signals.
+/// TT move. Dominates all other ordering signals.
 const TT_BONUS: i32 = 1_000_000;
 
 /// Queen promotions, ranked above captures.
@@ -92,7 +92,7 @@ impl MoveScorer {
         }
     }
 
-    /// Reset killers at the start of a new search; history persists.
+    /// Reset killers at the start of a new search. History persists.
     #[inline(always)]
     pub fn clear_killers(&mut self) {
         self.killer_moves.fill([0u32; KILLER_MOVES_PER_PLY]);
@@ -115,7 +115,7 @@ impl MoveScorer {
 
     /// Returns the quiet move (non-capture, non-promotion) with the highest
     /// raw history score for `side`, or `None` if no such move has nonzero
-    /// history. Used to gauge the quality of the history heuristic — a node
+    /// history. Used to gauge the quality of the history heuristic, a node
     /// where every quiet move has zero history isn't a meaningful sample.
     pub fn find_history_top(&self, side: Color, moves: &MoveList) -> Option<Move> {
         let mut best: Option<Move> = None;
@@ -135,7 +135,7 @@ impl MoveScorer {
 
     /// Insert `mv` as the primary killer at `ply`, shifting older entries
     /// down. If `mv` already occupies a slot, entries before it shift down
-    /// to that slot (no duplicates); otherwise the oldest entry is evicted.
+    /// to that slot (no duplicates). Otherwise the oldest entry is evicted.
     #[inline]
     pub fn update_killer(&mut self, mv: Move, ply: usize) {
         let killers = &mut self.killer_moves[ply];

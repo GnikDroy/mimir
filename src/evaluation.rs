@@ -1,7 +1,7 @@
 //! Static evaluation: tapered piece-square tables + material.
 //!
-//! The evaluator computes two parallel scores per side — a middlegame
-//! score (`mg`) and an endgame score (`eg`) — by summing material
+//! The evaluator computes two parallel scores per side, a middlegame
+//! score (`mg`) and an endgame score (`eg`), by summing material
 //! values and PSTs read from each piece's square. A single phase
 //! counter, accumulated from per-piece weights, tracks how far the
 //! position has progressed from the opening toward a bare king-and-pawn
@@ -19,7 +19,7 @@ use crate::state::GameState;
 
 /// Middlegame piece-square table for pawns, laid out rank 8 -> rank 1
 /// (top of the array is rank 8, bottom is rank 1). White reads it
-/// directly; black reads it after [`Square::flip_vertical`].
+/// directly. Black reads it after [`Square::flip_vertical`].
 #[rustfmt::skip]
 const MIDDLEGAME_PAWN_TABLE: [i32; 64] = [
       0,   0,   0,   0,   0,   0,  0,   0,
@@ -178,7 +178,7 @@ const ENDGAME_KING_TABLE: [i32; 64] = [
 ];
 
 /// Endgame PSTs indexed by [`Piece`] (King, Queen, Rook, Bishop, Knight,
-/// Pawn — see [`Piece::all`]).
+/// Pawn, see [`Piece::all`]).
 const ENDGAME_PIECE_TABLES: [[i32; 64]; Piece::NUM] = [
     ENDGAME_KING_TABLE,
     ENDGAME_QUEEN_TABLE,

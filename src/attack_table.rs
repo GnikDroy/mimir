@@ -34,7 +34,7 @@ struct MagicEntry {
 /// A magic table for one sliding-piece source square.
 ///
 /// `boards` is dense and indexed by the hash computed from
-/// [`AttackTable::index_table`]; collisions are allowed only when the
+/// [`AttackTable::index_table`]. Collisions are allowed only when the
 /// stored move-board already matches (verified during magic search).
 #[derive(Debug, Default)]
 struct MagicTable {
@@ -46,12 +46,8 @@ struct MagicTable {
 
 /// Lookup tables for every piece's attack set from every square.
 ///
-/// All fields are private; callers use the [`get_pawn`](Self::get_pawn),
-/// [`get_king`](Self::get_king), [`get_knight`](Self::get_knight),
-/// [`get_bishop`](Self::get_bishop), [`get_rook`](Self::get_rook), and
-/// [`get_queen`](Self::get_queen) accessors. The non-sliding arrays are
-/// indexed directly by [`Square`]; the sliding arrays go through a
-/// magic-bitboard hash that also incorporates the current `blockers`.
+/// Non-sliding arrays are indexed directly by [`Square`]. Sliding
+/// lookups go through a magic-bitboard hash of the current `blockers`.
 pub struct AttackTable {
     king: [BitBoard; Square::NUM],
     white_pawn: [BitBoard; Square::NUM],
@@ -70,17 +66,17 @@ pub struct AttackTable {
 }
 
 impl AttackTable {
-    /// Rank 1 (`a1..h1`) — used to clip southbound shifts and pawn pushes.
+    /// Rank 1 (`a1..h1`), used to clip southbound shifts and pawn pushes.
     const FIRST_RANK: BitBoard = 0x00000000000000ff;
-    /// Rank 8 — used to clip northbound shifts and pawn pushes.
+    /// Rank 8, used to clip northbound shifts and pawn pushes.
     const LAST_RANK: BitBoard = 0xff00000000000000;
-    /// The A-file — used to clip westbound shifts so they don't wrap.
+    /// The A-file, used to clip westbound shifts so they don't wrap.
     const FIRST_FILE: BitBoard = 0x0101010101010101;
-    /// The H-file — used to clip eastbound shifts so they don't wrap.
+    /// The H-file, used to clip eastbound shifts so they don't wrap.
     const LAST_FILE: BitBoard = 0x8080808080808080;
-    /// Files A+B — needed for knight jumps that move two files west.
+    /// Files A+B, needed for knight jumps that move two files west.
     const FIRST_TWO_FILES: BitBoard = 0x0303030303030303;
-    /// Files G+H — needed for knight jumps that move two files east.
+    /// Files G+H, needed for knight jumps that move two files east.
     const LAST_TWO_FILES: BitBoard = 0xc0c0c0c0c0c0c0c0;
 
     /// Builds all attack tables from scratch.
@@ -89,7 +85,7 @@ impl AttackTable {
     /// against every single-square bitboard. The sliding tables call
     /// [`find_magic`](Self::find_magic) per source square.
     ///
-    /// This is expensive (milliseconds) — call once via [`ATTACK_TABLE`].
+    /// This is expensive (milliseconds), call once via [`ATTACK_TABLE`].
     pub fn new() -> AttackTable {
         let simple_pieces_moves =
             |move_generator: fn(BitBoard) -> BitBoard| -> [BitBoard; Square::NUM] {
@@ -147,7 +143,7 @@ impl AttackTable {
 
     /// Returns the squares a pawn of `color` on `square` attacks.
     ///
-    /// Only diagonal capture targets are returned — single and double
+    /// Only diagonal capture targets are returned, single and double
     /// pushes are handled separately in move generation.
     pub fn get_pawn(&self, square: Square, color: Color) -> BitBoard {
         match color {
@@ -187,7 +183,7 @@ impl AttackTable {
 
     /// Returns the squares a queen on `square` attacks given `blockers`.
     ///
-    /// Computed as the union of the rook and bishop lookups — there is
+    /// Computed as the union of the rook and bishop lookups, there is
     /// no separate queen magic table.
     pub fn get_queen(&self, square: Square, blockers: BitBoard) -> BitBoard {
         let rook_table = &self.rook[square as usize];
@@ -440,7 +436,7 @@ impl AttackTable {
     }
 
     /// Reference (non-magic) bishop attack generator. Used during magic
-    /// search to compute the truth table; runtime queries use
+    /// search to compute the truth table. Runtime queries use
     /// [`get_bishop`](Self::get_bishop) instead.
     fn attack_bishop(board: BitBoard, blockers: BitBoard) -> BitBoard {
         Self::slide_north_east(board, blockers)
@@ -461,7 +457,7 @@ impl AttackTable {
     /// Relevant-blocker mask for a rook on `board`.
     ///
     /// Each ray is extended through an empty board and then trimmed of
-    /// its terminal edge square — a piece on the edge of a ray cannot
+    /// its terminal edge square, a piece on the edge of a ray cannot
     /// block the attack any further, so it does not affect the hash and
     /// excluding it shrinks the table.
     fn mask_rook(board: BitBoard) -> BitBoard {

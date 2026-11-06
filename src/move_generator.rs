@@ -53,8 +53,8 @@ impl LegalCtx {
             king_bb.pop_lsb().unwrap()
         };
 
-        // king_danger uses occ_no_king so sliders see through the king —
-        // otherwise the square behind a check ray looks safe.
+        // king_danger uses occ_no_king so sliders see through the king.
+        // Otherwise the square behind a check ray looks safe.
         let occ_no_king = all_occ ^ bitboards[Piece::King as usize];
 
         let mut king_danger = ATTACK_TABLE.get_king(enemy_king_sq);
@@ -107,7 +107,7 @@ impl LegalCtx {
 
         // check_mask: block-or-capture for a single check. `get_between` is
         // 0 for knight/pawn checkers, so the mask collapses to just the
-        // checker square — capture-only, no blocking.
+        // checker square, capture-only, no blocking.
         let check_mask = match num_checkers {
             0 => BitBoard::FULL,
             1 => {
@@ -174,7 +174,7 @@ impl GameState {
     }
 
     /// Strict-legal move generation in a single pass. Every emitted move
-    /// is legal and every legal move is emitted; in double check only
+    /// is legal and every legal move is emitted. In double check only
     /// king moves come back, and castling is skipped whenever the king
     /// is in check or the transit squares are attacked.
     pub fn generate_moves(&self, moves: &mut MoveList) -> LegalCtx {
@@ -183,7 +183,7 @@ impl GameState {
         let friendly = self.occupancies[me as usize];
         let enemy = &self.pieces[me.opposite() as usize];
 
-        // King moves first — they are the only legal moves under double check.
+        // King moves first, they are the only legal moves under double check.
         self.add_legal_king_moves(&ctx, friendly, enemy, moves);
 
         if ctx.num_checkers >= 2 {
@@ -201,7 +201,7 @@ impl GameState {
     }
 
     /// King moves restricted to squares not in [`LegalCtx::king_danger`].
-    /// Independent of pin/check masks — the king is never pinned and
+    /// Independent of pin/check masks, the king is never pinned and
     /// resolves checks by moving away rather than landing on the mask.
     fn add_legal_king_moves(
         &self,
@@ -223,7 +223,7 @@ impl GameState {
         enemy: &[BitBoard; 6],
         moves: &mut MoveList,
     ) {
-        // Pinned knights can never move — their jumps never lie on a ray.
+        // Pinned knights can never move, their jumps never lie on a ray.
         let knights = self.pieces[self.side_to_move as usize][Piece::Knight as usize] & !ctx.pinned;
         for from in knights.iter() {
             let targets = ATTACK_TABLE.get_knight(from) & !friendly & ctx.check_mask;
@@ -386,7 +386,7 @@ impl GameState {
 
         // empty_squares: king↔rook path must be unoccupied.
         // transit_squares: king's transit + destination, must be unattacked.
-        // The start square is implicit — callers only reach here with num_checkers == 0.
+        // The start square is implicit, callers only reach here with num_checkers == 0.
         let (rook_square, empty_squares, transit_squares) = match (color, kingside) {
             (Color::White, true) => (
                 Square::H1,
@@ -658,7 +658,7 @@ mod tests {
 
     #[test]
     fn test_king_does_not_walk_into_check() {
-        // Black rook on E8 — king can't step along the E-file, even though
+        // Black rook on E8, king can't step along the E-file, even though
         // the rook is currently blocked by the king on E1.
         let mut state = GameState::empty();
         state.side_to_move = Color::White;
@@ -749,7 +749,7 @@ mod tests {
 
     #[test]
     fn test_check_can_be_blocked_by_interposing_piece() {
-        // E8 rook checks E1; the F3 knight can interpose on E5.
+        // E8 rook checks E1. The F3 knight can interpose on E5.
         let mut state = GameState::empty();
         state.side_to_move = Color::White;
         set_piece(&mut state, Color::White, Piece::King, Square::E1);

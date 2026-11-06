@@ -1,16 +1,13 @@
 //! 64-bit bitboard primitive and its core operations.
 //!
-//! A [`BitBoard`] is a `u64` where bit `i` represents the square with
-//! index `i` under the A1 = 0, H8 = 63 ordering used throughout the
-//! engine. Files run within a rank (low bits = A-file), ranks stack
-//! upward (low bits = rank 1).
+//! A [`BitBoard`] is a `u64` where bit `i` is square `i`, A1 = 0 and
+//! H8 = 63. Files run within a rank, ranks stack upward.
 //!
-//! The shift helpers move every set bit one step in a compass direction,
-//! masking out the source rank/file first so bits cannot wrap onto the
-//! opposite edge.
+//! Shift helpers move every set bit one compass step, masking the edge
+//! rank/file first so bits cannot wrap.
 //!
-//! The [`bitboard!`] macro lets tests express boards as ASCII grids — A8
-//! is top-left, H1 is bottom-right, matching how a chess board is drawn.
+//! The [`bitboard!`] macro lets tests write boards as ASCII grids,
+//! drawn as on a real board (A8 top-left).
 
 use crate::core::*;
 
@@ -22,7 +19,7 @@ pub type BitBoard = u64;
 
 /// Bitboard constants and operations.
 ///
-/// Implemented for the [`BitBoard`] alias; trait form so the constants
+/// Implemented for the [`BitBoard`] alias. Trait form so the constants
 /// and helpers can be accessed as `BitBoard::EMPTY`,
 /// `bb.shift_north()`, etc.
 pub trait BitBoardMethods {

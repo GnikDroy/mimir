@@ -1,14 +1,14 @@
 //! Imperative side of the UCI loop.
 //!
-//! [`UCIAdapter`] owns the engine's mutable runtime state — the current
+//! [`UCIAdapter`] owns the engine's mutable runtime state (the current
 //! [`GameState`], a shared output writer, and a `search_generation`
-//! counter — and executes parsed [`UCICommand`] values.
+//! counter) and executes parsed [`UCICommand`] values.
 //!
 //! Searches run on a worker thread so the main thread can keep reading
 //! stdin (this is what makes `stop`, `position`, and `ucinewgame`
 //! responsive while a search is running). Every command that invalidates
 //! the in-flight search (`stop`, `position`, `ucinewgame`, `quit`)
-//! increments `search_generation`; the worker only emits its
+//! increments `search_generation`. The worker only emits its
 //! `bestmove`/`info` lines if the counter is still on the generation it
 //! captured at launch. Stale workers finish their work silently.
 
@@ -30,7 +30,7 @@ use super::parser::{GoCommand, UCICommand};
 
 /// Engine-side UCI runtime: position, generation counter, and writer.
 ///
-/// The writer is shared (`Arc<Mutex<…>>`) between the main thread and
+/// The writer is shared (`Arc<Mutex<...>>`) between the main thread and
 /// any in-flight search worker so both can emit lines without
 /// interleaving. The generation counter is also shared so workers can
 /// check whether their results are still relevant before printing.
@@ -91,14 +91,9 @@ impl UCIAdapter {
         self.stop_flag.store(true, Ordering::SeqCst);
     }
 
-    /// Formats a [`SearchResult`] as a single UCI `info` line and
-    /// writes it to `writer`.
+    /// Formats a [`SearchResult`] as a single UCI `info` line.
     ///
-    /// `seldepth` is reported as the max of the iterative-deepening
-    /// depth and the deepest quiescence ply reached. Mate scores are
-    /// converted from plies-to-mate to moves-to-mate (the UCI convention).
-    /// If no principal variation is available, falls back to printing
-    /// just the root best move under `pv`.
+    /// Mate scores are converted from plies to moves (UCI convention).
     pub fn handle_info<W: std::io::Write>(
         info: SearchResult,
         writer: &mut W,
@@ -140,20 +135,14 @@ impl UCIAdapter {
         Ok(())
     }
 
-    /// Dispatches one parsed UCI command and returns `true` if the
-    /// runtime loop should keep going, or `false` on `quit`.
+    /// Dispatches one parsed UCI command. Returns `false` on `quit`.
     ///
-    /// `position`, `ucinewgame`, and `quit` bump the generation counter so
-    /// any in-flight worker's eventual output is discarded (the position
-    /// it searched is no longer current). They also raise the stop flag
-    /// so the worker exits promptly instead of running to time-up.
+    /// `position`, `ucinewgame`, and `quit` bump the generation counter
+    /// so the in-flight worker's stale output is discarded, and raise
+    /// the stop flag so it exits promptly.
     ///
-    /// `stop` only raises the stop flag — it does NOT bump the generation,
-    /// because the UCI spec requires a `bestmove` for every `go`. The
-    /// worker emits its best move so far, then the GUI is unstuck.
-    ///
-    /// `go` spawns a search on a worker thread and returns immediately.
-    /// `setoption`, `ponderhit`, and `Unknown` are accepted but ignored.
+    /// `stop` only raises the stop flag. It does NOT bump the generation
+    /// because the UCI spec requires a `bestmove` for every `go`.
     pub fn handle_command(&mut self, command: UCICommand) -> bool {
         match command {
             UCICommand::Uci => {
@@ -182,7 +171,7 @@ impl UCIAdapter {
             }
             UCICommand::Stop => {
                 // Raise the abort flag but keep the generation so the
-                // worker's `bestmove` is still emitted — required by spec.
+                // worker's `bestmove` is still emitted, required by spec.
                 self.stop_flag.store(true, Ordering::SeqCst);
             }
             UCICommand::PonderHit => {}
@@ -292,7 +281,7 @@ impl UCIAdapter {
 
     /// Resets the position to `fen` (or the standard start when
     /// `fen` is `None`), then applies each UCI move in `moves` in
-    /// order. Invalid FEN falls back to the start position; moves
+    /// order. Invalid FEN falls back to the start position. Moves
     /// that don't match a legal move are silently skipped.
     fn apply_position(&mut self, fen: Option<String>, moves: Vec<String>) {
         self.state = match fen {
@@ -326,17 +315,12 @@ impl UCIAdapter {
 
     /// Spawns a search worker for `go` and returns immediately.
     ///
-    /// The worker captures the bumped generation token at launch and
-    /// only emits `bestmove` if the counter still matches when the
-    /// search finishes; `info` callbacks always print (interleaving is
-    /// prevented by the shared writer mutex). `go infinite` is mapped
-    /// to a fixed depth of `MAX_PLY` since the engine relies on the
-    /// time control / `stop` command to terminate iterative deepening.
+    /// The worker captures the bumped generation at launch and only
+    /// emits `bestmove` if the counter still matches when the search
+    /// finishes. `go infinite` maps to depth `MAX_PLY`.
     ///
-    /// The stop flag is cleared synchronously here, before the worker
-    /// is spawned, so a leftover `true` from a prior search can't make
-    /// the new one abort immediately. Any `stop` arriving after this
-    /// point races correctly with the worker via the atomic.
+    /// The stop flag is cleared here, before the worker spawns, so a
+    /// leftover `true` from a prior search can't abort the new one.
     fn launch_search(&mut self, go: GoCommand) {
         let generation = self.next_generation();
         self.stop_flag.store(false, Ordering::SeqCst);
@@ -548,7 +532,9 @@ mod tests {
         assert_eq!(adapter.past_position_keys.len(), 3);
         assert_eq!(adapter.past_position_keys[0], GameState::new().zobrist_hash);
         // Current position is not in the list.
-        assert!(!adapter.past_position_keys.contains(&adapter.state.zobrist_hash));
+        assert!(!adapter
+            .past_position_keys
+            .contains(&adapter.state.zobrist_hash));
 
         adapter.handle_command(UCICommand::UciNewGame);
         assert!(adapter.past_position_keys.is_empty());
@@ -712,7 +698,7 @@ mod tests {
             infinite: true,
         }));
 
-        // Let the worker start searching before we interrupt; otherwise we'd
+        // Let the worker start searching before we interrupt. Otherwise we'd
         // race against `launch_search` clearing the stop flag.
         std::thread::sleep(std::time::Duration::from_millis(50));
         adapter.handle_command(UCICommand::Stop);
@@ -760,7 +746,7 @@ mod tests {
     }
 
     /// `position` arriving mid-search should silently cancel the stale
-    /// worker — its bestmove would refer to the prior position and must
+    /// worker, its bestmove would refer to the prior position and must
     /// not be emitted.
     #[test]
     fn test_position_mid_search_suppresses_stale_bestmove() {

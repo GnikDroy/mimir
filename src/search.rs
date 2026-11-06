@@ -37,7 +37,12 @@ impl SearchResult {
     }
 }
 
-pub type ZobristHashList = StackVec<ZobristHash, MAX_PLY>;
+/// Only last 100 game positions matter for repetition
+/// due to irreversibility enforced at 50th move.
+pub const MAX_GAME_HISTORY: usize = 100;
+pub const HISTORY_CAP: usize = MAX_PLY + MAX_GAME_HISTORY;
+
+pub type ZobristHashList = StackVec<ZobristHash, HISTORY_CAP>;
 pub type PvList = StackVec<Move, MAX_PLY>;
 
 pub struct Searcher {
@@ -193,11 +198,13 @@ impl Searcher {
     }
 
     /// Iterative deepening search: tries depths 1, 2, 3, ... until time/depth limit
-    /// Returns the best move and evaluation found at the deepest completed depth
+    /// game_history holds hashes of positions played before
+    /// Returns the best move and evaluation found at the deepest completed depth.
     pub fn search(
         &mut self,
         state: &mut GameState,
         max_depth: u8,
+        game_history: &[ZobristHash],
         report_fn: Option<impl Fn(SearchResult)>,
     ) -> SearchResult {
         // No need to search if checkmate or stalemate.
@@ -220,9 +227,12 @@ impl Searcher {
 
         self.pv.clear();
 
-        // Reset position history: repetition detection only considers
-        // positions visited within this search tree.
+        // Seed the repetition stack with the game's past positions.
         self.position_history.clear();
+        let keep = game_history.len().min(MAX_GAME_HISTORY);
+        for &hash in &game_history[game_history.len() - keep..] {
+            self.position_history.push(hash);
+        }
 
         let mut best_eval = 0i32;
         let mut pv = PvList::default();
@@ -876,7 +886,7 @@ mod tests {
                 break;
             }
             let initial_time = std::time::Instant::now();
-            let result = searcher.search(state, search_depth, None::<fn(SearchResult)>);
+            let result = searcher.search(state, search_depth, &[], None::<fn(SearchResult)>);
             let elapsed = initial_time.elapsed();
             println!(
                 "Best Move: {}, Eval: {}, Nodes: {}, Max Depth: {}, Deepest Ply: {}, Time: {:?}",
@@ -950,7 +960,7 @@ mod tests {
         let mut state =
             GameState::from_fen("5rk1/5ppp/2p5/1p6/1Q1p1P2/2Pq4/bP2R2P/rNK1R3 w - - 0 24").unwrap();
         let mut searcher = Searcher::default();
-        let result = searcher.search(&mut state, 4, None::<fn(SearchResult)>);
+        let result = searcher.search(&mut state, 4, &[], None::<fn(SearchResult)>);
         let best_moves: Vec<Move> = result.pv.iter().copied().collect();
         assert_move_sequence(&best_moves, &["b4f8", "g8f8", "e2e8"]);
     }
@@ -960,7 +970,7 @@ mod tests {
         let mut state =
             GameState::from_fen("4k1r1/R6p/4Nb2/4n3/6Pq/2P4P/3Q3K/5R2 w - - 2 2").unwrap();
         let mut searcher = Searcher::default();
-        let result = searcher.search(&mut state, 7, None::<fn(SearchResult)>);
+        let result = searcher.search(&mut state, 7, &[], None::<fn(SearchResult)>);
         let best_moves: Vec<Move> = result.pv.iter().copied().collect();
         assert_move_sequence(&best_moves, &["d2d8", "f6d8", "f1f8", "g8f8", "e6g7"]);
     }
@@ -971,7 +981,7 @@ mod tests {
             GameState::from_fen("3qr2k/1p3rbp/2p3p1/p7/P2pBNn1/1P3n2/6P1/B1Q1RR1K b - - 1 30")
                 .unwrap();
         let mut searcher = Searcher::default();
-        let result = searcher.search(&mut state, 12, None::<fn(SearchResult)>);
+        let result = searcher.search(&mut state, 12, &[], None::<fn(SearchResult)>);
         let best_moves: Vec<Move> = result.pv.iter().copied().collect();
         let best_moves_expected = ["d8h4", "f4h3", "h4g3", "c1f4", "f7f4", "-", "g3h2"];
         assert_move_sequence(&best_moves, &best_moves_expected);
@@ -1067,6 +1077,51 @@ mod tests {
     }
 
     #[test]
+    fn test_losing_side_seeks_game_history_repetition() {
+        let mut state = GameState::from_fen("3q3k/8/8/8/8/8/8/KN6 w - - 0 1").unwrap();
+        let history = play_moves(&mut state, &["b1c3", "d8d7", "c3b1", "d7d8"]);
+        let mut searcher = Searcher::default();
+        let result = searcher.search(&mut state, 6, &history, None::<fn(SearchResult)>);
+        assert_eq!(result.evaluation, 0);
+        assert_eq!(
+            result.best_move().map(|m| m.to_uci()),
+            Some("b1c3".to_string())
+        );
+    }
+
+    #[test]
+    fn test_winning_side_avoids_game_history_repetition() {
+        let mut state = GameState::from_fen("7k/8/8/8/8/8/8/K2Q4 w - - 0 1").unwrap();
+        let history = play_moves(&mut state, &["d1e1", "h8g8", "e1d1", "g8h8"]);
+        let mut searcher = Searcher::default();
+        let result = searcher.search(&mut state, 6, &history, None::<fn(SearchResult)>);
+        assert!(
+            result.evaluation > Cp(300).to_internal(),
+            "eval = {} ({} cp)",
+            result.evaluation,
+            Cp::from_internal(result.evaluation)
+        );
+        assert_ne!(
+            result.best_move().map(|m| m.to_uci()),
+            Some("d4e4".to_string())
+        );
+    }
+
+    #[test]
+    fn test_without_game_history_repetition_is_invisible() {
+        let mut state = GameState::from_fen("3q3k/8/8/8/8/8/8/KN6 w - - 0 1").unwrap();
+        play_moves(&mut state, &["b1c3", "d8d7", "c3b1", "d7d8"]);
+        let mut searcher = Searcher::default();
+        let result = searcher.search(&mut state, 6, &[], None::<fn(SearchResult)>);
+        assert!(
+            result.evaluation < Cp(-300).to_internal(),
+            "eval = {} ({} cp)",
+            result.evaluation,
+            Cp::from_internal(result.evaluation)
+        );
+    }
+
+    #[test]
     fn test_search_fifty_move_rule_returns_zero() {
         // K+R vs K is normally winning for White, but with halfmove_clock=99
         // every legal first move (all non-capture, non-pawn) pushes the clock
@@ -1074,7 +1129,7 @@ mod tests {
         // and returns 0, which propagates back to the root.
         let mut state = GameState::from_fen("4k3/8/8/8/8/8/8/R3K3 w - - 99 50").unwrap();
         let mut searcher = Searcher::default();
-        let result = searcher.search(&mut state, 3, None::<fn(SearchResult)>);
+        let result = searcher.search(&mut state, 3, &[], None::<fn(SearchResult)>);
         assert_eq!(result.evaluation, 0);
     }
 
@@ -1085,7 +1140,7 @@ mod tests {
         let mut state =
             GameState::from_fen("1krqr3/p1p2n2/2Q3b1/p3n3/1b6/8/4BB2/5K2 w - - 0 1").unwrap();
         let mut searcher = Searcher::default();
-        let result = searcher.search(&mut state, 9, None::<fn(SearchResult)>);
+        let result = searcher.search(&mut state, 9, &[], None::<fn(SearchResult)>);
         assert_eq!(result.evaluation, 0);
         assert_eq!(
             result.best_move().map(|m| m.to_uci()),
@@ -1100,7 +1155,7 @@ mod tests {
         // has no escape and is not attacked.
         let mut state = GameState::from_fen("7k/5Q2/5K2/8/8/8/8/8 b - - 0 1").unwrap();
         let mut searcher = Searcher::default();
-        let result = searcher.search(&mut state, 1, None::<fn(SearchResult)>);
+        let result = searcher.search(&mut state, 1, &[], None::<fn(SearchResult)>);
         assert_eq!(result.evaluation, 0);
     }
 }

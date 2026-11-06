@@ -496,7 +496,7 @@ mod tests {
         )
         .unwrap();
         let mut searcher = Searcher::default();
-        let result = searcher.search(&mut state, 14, None::<fn(SearchResult)>);
+        let result = searcher.search(&mut state, 14, &[], None::<fn(SearchResult)>);
         println!("Game: {}", state);
         result.analytics.print();
     }
@@ -507,7 +507,7 @@ mod tests {
     fn analytics_search_startpos() {
         let mut state = GameState::new();
         let mut searcher = Searcher::default();
-        let result = searcher.search(&mut state, 14, None::<fn(SearchResult)>);
+        let result = searcher.search(&mut state, 14, &[], None::<fn(SearchResult)>);
         result.analytics.print();
     }
 
@@ -521,7 +521,7 @@ mod tests {
         )
         .unwrap();
         let mut searcher = Searcher::default();
-        let result = searcher.search(&mut state, 14, None::<fn(SearchResult)>);
+        let result = searcher.search(&mut state, 14, &[], None::<fn(SearchResult)>);
         result.analytics.print();
     }
 }

@@ -23,6 +23,7 @@ use crate::core::*;
 use crate::nnue::{evaluate, Cp};
 use crate::search::{SearchResult, Searcher, MAX_PLY};
 use crate::state::GameState;
+use crate::zobrist::ZobristHash;
 
 use super::options::EngineOptions;
 use super::parser::{GoCommand, UCICommand};
@@ -35,6 +36,7 @@ use super::parser::{GoCommand, UCICommand};
 /// check whether their results are still relevant before printing.
 pub struct UCIAdapter {
     state: GameState,
+    past_position_keys: Vec<ZobristHash>,
     options: EngineOptions,
     searcher: Arc<Mutex<Searcher>>,
     search_generation: Arc<AtomicU64>,
@@ -65,6 +67,7 @@ impl UCIAdapter {
         let searcher = Searcher::new(options, Arc::clone(&stop_flag));
         Self {
             state: GameState::new(),
+            past_position_keys: Vec::new(),
             options,
             searcher: Arc::new(Mutex::new(searcher)),
             search_generation: Arc::new(AtomicU64::new(0)),
@@ -166,6 +169,7 @@ impl UCIAdapter {
             }
             UCICommand::UciNewGame => {
                 self.state = GameState::new();
+                self.past_position_keys.clear();
                 self.abort_search();
                 self.searcher.lock().unwrap().clear_tt();
             }
@@ -296,8 +300,10 @@ impl UCIAdapter {
             None => GameState::new(),
         };
 
+        self.past_position_keys.clear();
         for mv_text in moves {
             if let Some(mv) = self.parse_uci_move(&mv_text) {
+                self.past_position_keys.push(self.state.zobrist_hash);
                 let _ = self.state.make_move(mv);
             }
         }
@@ -339,6 +345,7 @@ impl UCIAdapter {
         let out = Arc::clone(&self.out);
         let searcher = Arc::clone(&self.searcher);
         let mut state = self.state;
+        let past_position_keys = self.past_position_keys.clone();
 
         thread::spawn(move || {
             let mut searcher = searcher.lock().unwrap();
@@ -361,6 +368,7 @@ impl UCIAdapter {
             let result = searcher.search(
                 &mut state,
                 depth,
+                &past_position_keys,
                 Some(|info: SearchResult| {
                     if let Ok(mut writer) = out.lock() {
                         // You can't get rid of ok() here.
@@ -526,6 +534,24 @@ mod tests {
         let guard = output.lock().unwrap();
         let output_str = String::from_utf8_lossy(&guard);
         assert_eq!(output_str.trim(), "");
+    }
+
+    #[test]
+    fn test_position_records_past_position_keys() {
+        let (writer, _) = SharedBuffer::new();
+        let mut adapter = UCIAdapter::with_writer(Box::new(writer));
+
+        adapter.handle_command(UCICommand::Position {
+            fen: None,
+            moves: vec!["e2e4".into(), "e7e5".into(), "g1f3".into()],
+        });
+        assert_eq!(adapter.past_position_keys.len(), 3);
+        assert_eq!(adapter.past_position_keys[0], GameState::new().zobrist_hash);
+        // Current position is not in the list.
+        assert!(!adapter.past_position_keys.contains(&adapter.state.zobrist_hash));
+
+        adapter.handle_command(UCICommand::UciNewGame);
+        assert!(adapter.past_position_keys.is_empty());
     }
 
     #[test]

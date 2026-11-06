@@ -17,7 +17,7 @@ Mimir is a UCI compatible chess engine built from scratch.
 - [x] Reverse Futility Pruning (RFP)
 - [x] Delta pruning and Static Exchange Evaluation (SEE).
 - [x] A UCI compatible interface with a soft-hard limit time scheduler.
-- [x] Playable on lichess [@playmimir](www.lichess.org/@/playmimir). Uses the lichess bot API. 
+- [x] Playable on lichess [@playmimir](https://lichess.org/@/playmimir). Uses the lichess bot API. 
 
 ## Building
 
@@ -35,8 +35,14 @@ cargo build --release
 cargo test --release
 ```
 
+### NNUE Training & Network
+
+Mimir uses a simple NNUE network instead of a HCE by default.
+
+`mimir-512-v1.bin` is a \[ (768 → 512)×2 -> 1 \] network trained on 6B unique positions.
+We use bullet for training the network. The training code is present in training/
+
 ## References
 
 - [Chess Programming Wiki](https://www.chessprogramming.org/) – comprehensive reference for most techniques outlined above
 - [lichess-bot](https://github.com/lichess-bot-devs/lichess-bot) - A bridge between lichess and bots.
-- beans.bin - Credits to @ciekce [Stormphrax] from discord for training the network

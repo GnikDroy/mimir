@@ -98,6 +98,15 @@ impl MoveScorer {
         self.killer_moves.fill([0u32; KILLER_MOVES_PER_PLY]);
     }
 
+    /// Reset history heuristic.
+    pub fn clear_history(&mut self) {
+        for color in self.history.iter_mut() {
+            for from in color.iter_mut() {
+                from.fill(0);
+            }
+        }
+    }
+
     /// `true` when `mv` is a registered killer move at `ply`.
     #[inline]
     pub fn is_killer(&self, mv: Move, ply: usize) -> bool {

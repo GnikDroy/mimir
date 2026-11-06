@@ -99,6 +99,12 @@ impl Searcher {
         self.transposition_table.clear();
     }
 
+    /// Reset state for fresh game.
+    pub fn new_game(&mut self) {
+        self.transposition_table.clear();
+        self.move_scorer.clear_history();
+    }
+
     /// Snapshot the root PV into a `PvList` for reporting. After the
     /// triangular table runs out (TT cutoffs leave it short), continue by
     /// replaying TT entries until we hit a miss, a missing best_move, an

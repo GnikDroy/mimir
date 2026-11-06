@@ -171,7 +171,7 @@ impl UCIAdapter {
                 self.state = GameState::new();
                 self.past_position_keys.clear();
                 self.abort_search();
-                self.searcher.lock().unwrap().clear_tt();
+                self.searcher.lock().unwrap().new_game();
             }
             UCICommand::Position { fen, moves } => {
                 self.abort_search();

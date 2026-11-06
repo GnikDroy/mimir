@@ -335,6 +335,7 @@ impl UCIAdapter {
         let generation = self.next_generation();
         self.stop_flag.store(false, Ordering::SeqCst);
         let generation_token = Arc::clone(&self.search_generation);
+        let stop_flag = Arc::clone(&self.stop_flag);
         let out = Arc::clone(&self.out);
         let searcher = Arc::clone(&self.searcher);
         let mut state = self.state;
@@ -368,6 +369,16 @@ impl UCIAdapter {
                     }
                 }),
             );
+
+            // the search may finish early but as per UCI spec
+            // we wait for "stop" or an aborting command
+            if go.infinite {
+                while !stop_flag.load(Ordering::SeqCst)
+                    && generation_token.load(Ordering::SeqCst) == generation
+                {
+                    thread::sleep(std::time::Duration::from_millis(10));
+                }
+            }
 
             if generation_token.load(Ordering::SeqCst) == generation {
                 let msg = match result.best_move() {
@@ -683,6 +694,41 @@ mod tests {
         assert!(
             wait_for(&output, "bestmove", std::time::Duration::from_secs(1)),
             "expected `bestmove` after stop, got: {}",
+            String::from_utf8_lossy(&output.lock().unwrap()),
+        );
+    }
+
+    #[test]
+    fn test_go_infinite_holds_bestmove_until_stop() {
+        let (writer, output) = SharedBuffer::new();
+        let mut adapter = UCIAdapter::with_writer(Box::new(writer));
+
+        // Mate in one should be found instantly
+        adapter.handle_command(UCICommand::Position {
+            fen: Some("3r4/1K6/2Nb4/2kb4/8/8/3PB3/8 w - - 0 1".to_string()),
+            moves: vec![],
+        });
+        adapter.handle_command(UCICommand::Go(GoCommand {
+            depth: None,
+            movetime: None,
+            wtime: None,
+            btime: None,
+            winc: None,
+            binc: None,
+            movestogo: None,
+            infinite: true,
+        }));
+
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        assert!(
+            !String::from_utf8_lossy(&output.lock().unwrap()).contains("bestmove"),
+            "bestmove emitted before stop during go infinite",
+        );
+
+        adapter.handle_command(UCICommand::Stop);
+        assert!(
+            wait_for(&output, "bestmove", std::time::Duration::from_secs(1)),
+            "expected bestmove after stop, got: {}",
             String::from_utf8_lossy(&output.lock().unwrap()),
         );
     }

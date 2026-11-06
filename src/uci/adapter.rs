@@ -362,7 +362,9 @@ impl UCIAdapter {
                 depth,
                 Some(|info: SearchResult| {
                     if let Ok(mut writer) = out.lock() {
-                        Self::handle_info(info, &mut *writer).unwrap();
+                        // You can't get rid of ok() here.
+                        // There channel we used to report errors just died ;)
+                        Self::handle_info(info, &mut *writer).ok();
                     }
                 }),
             );
@@ -373,7 +375,9 @@ impl UCIAdapter {
                     None => "bestmove 0000".to_string(),
                 };
                 if let Ok(mut writer) = out.lock() {
-                    writeln!(writer, "{}", msg).unwrap();
+                    // You can't get rid of ok() here.
+                    // There channel we used to report errors just died ;)
+                    writeln!(writer, "{}", msg).ok();
                 }
             }
         });

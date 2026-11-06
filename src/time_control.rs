@@ -106,17 +106,15 @@ impl TimeControl {
 
     /// Computes the `(soft, hard)` budgets for this move.
     ///
-    /// Hard is the strictest of `move_time` and the clock-derived budget
-    /// (`remaining/movestogo + inc/2`), minus the safety buffer — the
-    /// same value the old single-deadline scheme used.
+    /// Hard is the strictest `move_time` (`remaining/movestogo + inc/2`),
+    /// minus the safety buffer.
     ///
-    /// Soft is `hard / SOFT_DIVISOR` — the threshold for *starting* a
-    /// new iterative-deepening iteration. When `move_time` is the
-    /// binding candidate, soft collapses to hard so `go movetime`
-    /// stays deterministic.
+    /// Soft is `hard / SOFT_DIVISOR`. This is the threshold for *starting* a
+    /// new iterative-deepening iteration. When `move_time` is used,
+    /// soft collapses to hard so `go movetime` is accurate.
     ///
-    /// Returns `None` when no timing field was supplied — the search
-    /// then runs to depth or until `stop`.
+    /// Returns `None` when no timing field was supplied.
+    /// In that case, search will run to depth or until `stop`.
     fn move_time_budget(&self, side_to_move: Color) -> Option<(Duration, Duration)> {
         let (remaining, increment) = match side_to_move {
             Color::White => (self.wtime, self.winc),
@@ -129,11 +127,15 @@ impl TimeControl {
             rem / moves_left + inc / 2
         });
 
-        let hard = [self.move_time, clock_budget]
-            .into_iter()
-            .flatten()
-            .min()?
-            .saturating_sub(self.move_overhead);
+        let mut hard = [self.move_time, clock_budget].into_iter().flatten().min()?;
+        if let Some(rem) = remaining {
+            // With a large increment compared to remaining time,
+            // the budget can exceed the remaining time. The engine gets flagged.
+            // Cap at 80% of remaining.
+            hard = hard.min(rem / 5 * 4);
+        }
+
+        hard = hard.saturating_sub(self.move_overhead);
 
         let soft = match self.move_time {
             Some(_) if self.move_time <= clock_budget || clock_budget.is_none() => hard,
@@ -290,6 +292,25 @@ mod tests {
         // base = 100/20 = 5ms; overhead 500ms saturates to 0.
         assert_eq!(hard, Duration::ZERO);
         assert_eq!(soft, Duration::ZERO);
+    }
+
+    #[test]
+    fn test_budget_never_exceeds_remaining_time() {
+        // 500ms left with a 2s increment: rem/20 + inc/2 = 1025ms would
+        // flag. Budget must be capped below the remaining 500ms.
+        let mut tc = TimeControl::with_overhead(Duration::from_millis(10));
+        tc.update_clock(
+            Some(Duration::from_millis(500)),
+            Some(Duration::from_millis(500)),
+            Some(Duration::from_secs(2)),
+            Some(Duration::from_secs(2)),
+            None,
+            None,
+        );
+        let (soft, hard) = tc.move_time_budget(Color::White).unwrap();
+        // cap = 500 * 4/5 = 400ms, minus 10ms overhead.
+        assert_eq!(hard, Duration::from_millis(390));
+        assert!(soft <= hard);
     }
 
     #[test]

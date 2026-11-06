@@ -136,8 +136,12 @@ impl Searcher {
 
             working_state.make_move(mv);
 
-            // A TT-pointed cycle would loop here forever — stop on revisit.
-            if seen.contains(&working_state.zobrist_hash) {
+            // TT cycle would loop forever, so we stop on revisit
+            // Also if we have 3 fold repetition from previous hashes, 
+            // then we stop as well.
+            if seen.contains(&working_state.zobrist_hash)
+                || self.is_repetition(working_state.zobrist_hash, working_state.halfmove_clock)
+            {
                 break;
             }
 

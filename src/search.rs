@@ -55,7 +55,7 @@ pub struct Searcher {
     stop: Arc<AtomicBool>,
 }
 
-pub const MAX_PLY: usize = 64;
+pub const MAX_PLY: usize = 128;
 
 // Check for timeouts every N nodes in alpha-beta and every M quiescence nodes.
 const NODE_CHECK_INTERVAL: u64 = 256;
@@ -358,6 +358,11 @@ impl Searcher {
                 || self.is_repetition(state.zobrist_hash, state.halfmove_clock))
         {
             return SearchStatus::Complete((None, 0));
+        }
+
+        // Max ply reached
+        if ply >= MAX_PLY - 1 {
+            return SearchStatus::Complete((None, evaluate(state)));
         }
 
         // Check extension: spend one extra ply when the side to move is in check.
@@ -713,6 +718,11 @@ impl Searcher {
     ) -> SearchStatus<i32> {
         self.analytics.max_ply_reached = self.analytics.max_ply_reached.max(ply as u8);
         self.analytics.quiescence_nodes_searched += 1;
+
+        // Max ply reached
+        if ply >= MAX_PLY - 1 {
+            return SearchStatus::Complete(evaluate(state));
+        }
 
         // Abort check: external stop signal takes precedence over time-up
         // so we report the cause faithfully.

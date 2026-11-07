@@ -91,12 +91,19 @@ impl TranspositionTable {
 
     /// Inserts `entry`. Keeps an existing same-key entry searched to a
     /// strictly greater depth. Every other case overwrites.
-    pub fn store(&mut self, entry: TranspositionEntry) {
+    pub fn store(&mut self, mut entry: TranspositionEntry) {
         let index = self.index(entry.key);
 
         match self.entries[index] {
             Some(existing) if existing.key == entry.key && existing.depth > entry.depth => {}
-            _ => self.entries[index] = Some(entry),
+            existing => {
+                if entry.best_move.is_none() {
+                    if let Some(old) = existing.filter(|e| e.key == entry.key) {
+                        entry.best_move = old.best_move;
+                    }
+                }
+                self.entries[index] = Some(entry);
+            }
         }
     }
 

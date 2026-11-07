@@ -738,12 +738,18 @@ impl Searcher {
             TranspositionFlag::Exact
         };
 
+        let stored_move = if best_eval > original_alpha {
+            best_move
+        } else {
+            None
+        };
+
         self.transposition_table.store(TranspositionEntry {
             key: state.zobrist_hash,
             depth,
             score: score::encode_tt_score(best_eval, ply),
             flag,
-            best_move,
+            best_move: stored_move,
         });
 
         SearchStatus::Complete((best_move, best_eval))

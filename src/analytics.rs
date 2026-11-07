@@ -244,10 +244,9 @@ impl fmt::Display for SearchAnalytics {
         )?;
         writeln!(
             f,
-            "{:<w$}{} ({:.1}% of quiescence nodes)",
-            "Delta pruning attempts (quiescence):",
+            "{:<w$}{}",
+            "Delta pruning attempts (moves):",
             with_commas(self.delta_pruning_attempts),
-            pct(self.delta_pruning_attempts, self.quiescence_nodes_searched),
             w = LABEL_WIDTH,
         )?;
         writeln!(
@@ -260,10 +259,9 @@ impl fmt::Display for SearchAnalytics {
         )?;
         writeln!(
             f,
-            "{:<w$}{} ({:.1}% of quiescence nodes)",
-            "SEE pruning attempts (quiescence):",
+            "{:<w$}{}",
+            "SEE pruning attempts (moves):",
             with_commas(self.see_pruning_attempts),
-            pct(self.see_pruning_attempts, self.quiescence_nodes_searched),
             w = LABEL_WIDTH,
         )?;
         writeln!(

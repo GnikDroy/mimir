@@ -11,10 +11,16 @@ use crate::state::GameState;
 const KILLER_MOVES_PER_PLY: usize = 2;
 
 /// History cap. Keeps `history_bonus` just under `KILLER_BONUS`.
-const HISTORY_MAX: u32 = 8 * 8_000;
+const HISTORY_MAX: i32 = 8 * 8_000;
 
 /// Depth squared multipler constant
-const HISTORY_BONUS_MULTIPLIER: u32 = 8;
+const HISTORY_BONUS_MULTIPLIER: i32 = 8;
+
+/// Depth-scaled magnitude of a history reward/penalty.
+#[inline]
+fn depth_bonus(depth: u8) -> i32 {
+    (depth as i32) * (depth as i32) * HISTORY_BONUS_MULTIPLIER
+}
 
 /// TT move. Dominates all other ordering signals.
 const TT_BONUS: i32 = 1_000_000;
@@ -30,13 +36,13 @@ pub const PIECE_VALUES: [i32; Piece::NUM] = [20_000, 900, 500, 330, 320, 100];
 
 pub struct MoveScorer {
     killer_moves: Box<[[Move; KILLER_MOVES_PER_PLY]; MAX_PLY]>,
-    history: Box<[[[Move; Square::NUM]; Square::NUM]; Color::NUM]>,
+    history: Box<[[[i32; Square::NUM]; Square::NUM]; Color::NUM]>,
 }
 
 impl MoveScorer {
     pub fn new() -> Self {
         let killer_moves = Box::new([[0u32; KILLER_MOVES_PER_PLY]; MAX_PLY]);
-        let history = Box::new([[[0u32; Square::NUM]; Square::NUM]; Color::NUM]);
+        let history = Box::new([[[0i32; Square::NUM]; Square::NUM]; Color::NUM]);
         Self {
             killer_moves,
             history,
@@ -58,7 +64,7 @@ impl MoveScorer {
         let from = mv.get_from() as usize;
         let to = mv.get_to() as usize;
         let history_bonus =
-            (self.history[state.side_to_move as usize][from][to] / HISTORY_BONUS_MULTIPLIER) as i32;
+            self.history[state.side_to_move as usize][from][to] / HISTORY_BONUS_MULTIPLIER;
 
         tt_bonus
             + match mv.get_type() {
@@ -119,7 +125,7 @@ impl MoveScorer {
     /// where every quiet move has zero history isn't a meaningful sample.
     pub fn find_history_top(&self, side: Color, moves: &MoveList) -> Option<Move> {
         let mut best: Option<Move> = None;
-        let mut best_val: u32 = 0;
+        let mut best_val: i32 = 0;
         for &mv in moves.iter() {
             if mv.is_capture() || mv.is_promotion() {
                 continue;
@@ -149,20 +155,26 @@ impl MoveScorer {
         killers[0] = mv;
     }
 
-    /// Add a depth-scaled bonus to the history score for a quiet move
-    /// that caused a beta cutoff.
+    /// Reward a quiet move that caused a beta cutoff.
     #[inline]
-    pub fn update_history(&mut self, mv: Move, depth: u8, side: Color) {
+    pub fn reward_history(&mut self, mv: Move, depth: u8, side: Color) {
+        self.apply_bonus(mv, side, depth_bonus(depth));
+    }
+
+    /// Penalize a quiet move searched before the cutoff move.
+    #[inline]
+    pub fn penalize_history(&mut self, mv: Move, depth: u8, side: Color) {
+        self.apply_bonus(mv, side, -depth_bonus(depth));
+    }
+
+    /// History bonus with gravity and malus.
+    /// Entries decay toward the signal but within `[-HISTORY_MAX, HISTORY_MAX]`
+    #[inline]
+    fn apply_bonus(&mut self, mv: Move, side: Color, bonus: i32) {
         let from = mv.get_from() as usize;
         let to = mv.get_to() as usize;
-
-        // Add a bonus based on depth (deeper moves that cause cutoffs are more valuable)
-        let bonus = (depth as u32) * (depth as u32) * HISTORY_BONUS_MULTIPLIER;
-
-        // Cap history values to prevent overflow and unbounded growth
-        self.history[side as usize][from][to] = self.history[side as usize][from][to]
-            .saturating_add(bonus)
-            .min(HISTORY_MAX);
+        let entry = &mut self.history[side as usize][from][to];
+        *entry += bonus - *entry * bonus.abs() / HISTORY_MAX;
     }
 }
 

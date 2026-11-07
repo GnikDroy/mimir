@@ -547,6 +547,9 @@ impl Searcher {
         let history_top = self.move_scorer.find_history_top(state.side_to_move, &buf);
         let mut history_top_tried = false;
 
+        // Quiet moves searched for history malus.
+        let mut tried_quiets: StackVec<Move, MAX_MOVE_COUNT> = StackVec::default();
+
         let mut best_move = None;
         let mut best_eval = i32::MIN / 2;
         for (i, mv) in buf.ordered().enumerate() {
@@ -689,9 +692,19 @@ impl Searcher {
                     // History heuristic tracks quiet moves that lead to cutoffs regardless of depth.
                     // Even a shallow cutoff can indicate a move that is good in general.
                     self.move_scorer
-                        .update_history(mv, depth, state.side_to_move);
+                        .reward_history(mv, depth, state.side_to_move);
+
+                    // Penalize using history malus.
+                    for &quiet in tried_quiets.iter() {
+                        self.move_scorer
+                            .penalize_history(quiet, depth, state.side_to_move);
+                    }
                 }
                 break;
+            }
+
+            if !mv.is_capture() && !mv.is_promotion() {
+                tried_quiets.push(mv);
             }
         }
 

@@ -550,6 +550,24 @@ impl Searcher {
         let mut best_move = None;
         let mut best_eval = i32::MIN / 2;
         for (i, mv) in buf.ordered().enumerate() {
+            // Futility pruning. At shallow non-PV nodes, skip a quiet move
+            // when the static eval is below than alpha such that the move
+            // can't realistically raise it. First move is always searched.
+            const FUTILITY_MAX_DEPTH: u8 = 6;
+            const FUTILITY_MARGIN_PER_DEPTH: i32 = Cp(120).to_internal();
+            if !is_pv
+                && !in_check
+                && i > 0
+                && depth <= FUTILITY_MAX_DEPTH
+                && !mv.is_capture()
+                && !mv.is_promotion()
+                && score::mate_in_plies(alpha).is_none()
+                && static_eval
+                    .is_some_and(|se| se + FUTILITY_MARGIN_PER_DEPTH * depth as i32 <= alpha)
+            {
+                continue;
+            }
+
             // Track which ordering signal this move corresponds to.
             if Some(mv) == tt_move {
                 self.analytics.tt_move_tried += 1;

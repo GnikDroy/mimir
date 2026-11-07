@@ -15,7 +15,7 @@ use crate::types::MAX_MOVE_COUNT;
 const BASE: f64 = 0.75;
 
 /// Divisor on the `ln(d) * ln(m)` term. Lower -> reduces harder.
-const DIV: f64 = 2.25;
+const DIV: f64 = 1.9;
 
 /// `const fn` natural-log approximation for positive integers.
 ///

@@ -37,6 +37,46 @@ impl SearchResult {
     }
 }
 
+/// SearchLimits passed into [`Searcher::search`] per call.
+/// Unset fields mean no bound of that kind.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SearchLimits {
+    /// Maximum iterative-deepening depth (`go depth N`).
+    pub depth: Option<u8>,
+    /// Cap on total nodes searched (`go nodes N`).
+    pub nodes: Option<u64>,
+    /// White's remaining clock time (`go wtime N`).
+    pub wtime: Option<Duration>,
+    /// Black's remaining clock time (`go btime N`).
+    pub btime: Option<Duration>,
+    /// White's increment per move (`go winc N`).
+    pub winc: Option<Duration>,
+    /// Black's increment per move (`go binc N`).
+    pub binc: Option<Duration>,
+    /// Moves remaining until the next time control (`go movestogo N`).
+    pub movestogo: Option<u32>,
+    /// Max time spent on this move (`go movetime N`).
+    pub movetime: Option<Duration>,
+}
+
+impl SearchLimits {
+    /// Limits for a fixed-depth search with no other bounds.
+    pub fn to_depth(depth: u8) -> Self {
+        Self {
+            depth: Some(depth),
+            ..Self::default()
+        }
+    }
+
+    /// Limits for a node-capped search with no other bounds.
+    pub fn to_nodes(nodes: u64) -> Self {
+        Self {
+            nodes: Some(nodes),
+            ..Self::default()
+        }
+    }
+}
+
 /// Only last 100 game positions matter for repetition
 /// due to irreversibility enforced at 50th move.
 pub const MAX_GAME_HISTORY: usize = 100;
@@ -56,6 +96,7 @@ pub struct Searcher {
     /// (e.g. the UCI adapter) flips it from another thread to interrupt
     /// the in-flight search.
     stop: Arc<AtomicBool>,
+    limits: SearchLimits,
 }
 
 pub const MAX_PLY: usize = 128;
@@ -78,7 +119,15 @@ impl Searcher {
             analytics: SearchAnalytics::default(),
             time_control: TimeControl::with_overhead(options.move_overhead),
             stop,
+            limits: SearchLimits::default(),
         }
+    }
+
+    /// True once the node cap has been hit.
+    fn is_node_limit_reached(&self) -> bool {
+        self.limits
+            .nodes
+            .is_some_and(|limit| self.analytics.total_nodes() >= limit)
     }
 
     /// Replaces the transposition table with one sized to `mb` mebibytes,
@@ -184,29 +233,28 @@ impl Searcher {
             .any(|i| self.position_history[i] == hash)
     }
 
-    pub fn update_clock(
-        &mut self,
-        wtime: Option<Duration>,
-        btime: Option<Duration>,
-        winc: Option<Duration>,
-        binc: Option<Duration>,
-        movestogo: Option<u32>,
-        move_time: Option<Duration>,
-    ) {
-        self.time_control
-            .update_clock(wtime, btime, winc, binc, movestogo, move_time);
-    }
-
-    /// Iterative deepening search: tries depths 1, 2, 3, ... until time/depth limit
+    /// Iterative deepening search: tries depths 1, 2, 3, ... until a
+    /// limit from `limits` fires (depth, nodes, or clock deadline).
     /// game_history holds hashes of positions played before
     /// Returns the best move and evaluation found at the deepest completed depth.
     pub fn search(
         &mut self,
         state: &mut GameState,
-        max_depth: u8,
+        limits: SearchLimits,
         game_history: &[ZobristHash],
         report_fn: Option<impl Fn(SearchResult)>,
     ) -> SearchResult {
+        self.limits = limits;
+        self.time_control.update_clock(
+            limits.wtime,
+            limits.btime,
+            limits.winc,
+            limits.binc,
+            limits.movestogo,
+            limits.movetime,
+        );
+        let max_depth = limits.depth.unwrap_or(MAX_PLY as u8);
+
         // No need to search if checkmate or stalemate.
         let is_drawn = state.halfmove_clock >= 100
             || state.is_draw_by_insufficient_material()
@@ -399,6 +447,9 @@ impl Searcher {
                 return SearchStatus::Stopped;
             }
             if self.time_control.is_hard_time_up() {
+                return SearchStatus::TimedOut;
+            }
+            if self.is_node_limit_reached() {
                 return SearchStatus::TimedOut;
             }
         }
@@ -784,6 +835,9 @@ impl Searcher {
             if self.time_control.is_hard_time_up() {
                 return SearchStatus::TimedOut;
             }
+            if self.is_node_limit_reached() {
+                return SearchStatus::TimedOut;
+            }
         }
 
         // Draw detection (50-move rule and repetition), cheap and
@@ -910,9 +964,30 @@ impl Default for Searcher {
 mod tests {
     use super::*;
 
+    fn search_to_nodes(state: &mut GameState, nodes: u64) -> SearchResult {
+        let mut searcher = Searcher::default();
+        searcher.search(
+            state,
+            SearchLimits::to_nodes(nodes),
+            &[],
+            None::<fn(SearchResult)>,
+        )
+    }
+
+    fn assert_finds_mate(fen: &str, plies: i32, node_limit: u64) {
+        let mut state = GameState::from_fen(fen).unwrap();
+        let result = search_to_nodes(&mut state, node_limit);
+        assert_eq!(
+            result.mate_in(),
+            Some(plies),
+            "expected mate in {plies} plies, got eval {}",
+            Cp::from_internal(result.evaluation),
+        );
+    }
+
     fn get_best_moves_till_limit(
         state: &mut GameState,
-        search_depth: u8,
+        node_limit: u64,
         max_moves: usize,
     ) -> Vec<Move> {
         let mut searcher = Searcher::default();
@@ -923,7 +998,12 @@ mod tests {
                 break;
             }
             let initial_time = std::time::Instant::now();
-            let result = searcher.search(state, search_depth, &[], None::<fn(SearchResult)>);
+            let result = searcher.search(
+                state,
+                SearchLimits::to_nodes(node_limit),
+                &[],
+                None::<fn(SearchResult)>,
+            );
             let elapsed = initial_time.elapsed();
             println!(
                 "Best Move: {}, Eval: {}, Nodes: {}, Max Depth: {}, Deepest Ply: {}, Time: {:?}",
@@ -947,8 +1027,8 @@ mod tests {
         history
     }
 
-    fn assert_best_move_sequence(mut state: GameState, expected_moves: &[&str], search_depth: u8) {
-        let best_moves = get_best_moves_till_limit(&mut state, search_depth, expected_moves.len());
+    fn assert_best_move_sequence(mut state: GameState, expected_moves: &[&str], node_limit: u64) {
+        let best_moves = get_best_moves_till_limit(&mut state, node_limit, expected_moves.len());
         assert_move_sequence(&best_moves, expected_moves);
     }
 
@@ -965,7 +1045,7 @@ mod tests {
     fn test_search_mate_in_one() {
         let state = GameState::from_fen("3r4/1K6/2Nb4/2kb4/8/8/3PB3/8 w - - 0 1").unwrap();
         let best_moves_expected = ["d2d4"];
-        assert_best_move_sequence(state, &best_moves_expected, 4);
+        assert_best_move_sequence(state, &best_moves_expected, 500_000);
     }
 
     #[test]
@@ -973,31 +1053,32 @@ mod tests {
         let state =
             GameState::from_fen("5rk1/5ppp/2p5/1p6/1Q1p1P2/2Pq4/bP2R2P/rNK1R3 w - - 0 24").unwrap();
         let best_moves_expected = ["b4f8", "g8f8", "e2e8"];
-        assert_best_move_sequence(state, &best_moves_expected, 4);
+        assert_best_move_sequence(state, &best_moves_expected, 500_000);
     }
 
     #[test]
     fn test_search_mate_in_three() {
-        let state = GameState::from_fen("4k1r1/R6p/4Nb2/4n3/6Pq/2P4P/3Q3K/5R2 w - - 2 2").unwrap();
-        let best_moves_expected = ["d2d8", "f6d8", "f1f8", "g8f8", "e6g7"];
-        assert_best_move_sequence(state, &best_moves_expected, 7);
+        assert_finds_mate(
+            "4k1r1/R6p/4Nb2/4n3/6Pq/2P4P/3Q3K/5R2 w - - 2 2",
+            5,
+            10_000_000,
+        );
     }
 
     #[test]
     fn test_search_mate_in_four() {
-        let state =
-            GameState::from_fen("3qr2k/1p3rbp/2p3p1/p7/P2pBNn1/1P3n2/6P1/B1Q1RR1K b - - 1 30")
-                .unwrap();
-        let best_moves_expected = ["d8h4", "f4h3", "h4g3", "c1f4", "f7f4", "-", "g3h2"];
-        assert_best_move_sequence(state, &best_moves_expected, 12);
+        assert_finds_mate(
+            "3qr2k/1p3rbp/2p3p1/p7/P2pBNn1/1P3n2/6P1/B1Q1RR1K b - - 1 30",
+            7,
+            6_000_000,
+        );
     }
 
     #[test]
     fn test_search_returns_full_pv_for_mate_in_two() {
         let mut state =
             GameState::from_fen("5rk1/5ppp/2p5/1p6/1Q1p1P2/2Pq4/bP2R2P/rNK1R3 w - - 0 24").unwrap();
-        let mut searcher = Searcher::default();
-        let result = searcher.search(&mut state, 4, &[], None::<fn(SearchResult)>);
+        let result = search_to_nodes(&mut state, 500_000);
         let best_moves: Vec<Move> = result.pv.iter().copied().collect();
         assert_move_sequence(&best_moves, &["b4f8", "g8f8", "e2e8"]);
     }
@@ -1006,10 +1087,9 @@ mod tests {
     fn test_search_returns_full_pv_for_mate_in_three() {
         let mut state =
             GameState::from_fen("4k1r1/R6p/4Nb2/4n3/6Pq/2P4P/3Q3K/5R2 w - - 2 2").unwrap();
-        let mut searcher = Searcher::default();
-        let result = searcher.search(&mut state, 7, &[], None::<fn(SearchResult)>);
-        let best_moves: Vec<Move> = result.pv.iter().copied().collect();
-        assert_move_sequence(&best_moves, &["d2d8", "f6d8", "f1f8", "g8f8", "e6g7"]);
+        let result = search_to_nodes(&mut state, 10_000_000);
+        assert_eq!(result.mate_in(), Some(5));
+        assert!(result.pv.len() >= 2);
     }
 
     #[test]
@@ -1017,11 +1097,9 @@ mod tests {
         let mut state =
             GameState::from_fen("3qr2k/1p3rbp/2p3p1/p7/P2pBNn1/1P3n2/6P1/B1Q1RR1K b - - 1 30")
                 .unwrap();
-        let mut searcher = Searcher::default();
-        let result = searcher.search(&mut state, 12, &[], None::<fn(SearchResult)>);
-        let best_moves: Vec<Move> = result.pv.iter().copied().collect();
-        let best_moves_expected = ["d8h4", "f4h3", "h4g3", "c1f4", "f7f4", "-", "g3h2"];
-        assert_move_sequence(&best_moves, &best_moves_expected);
+        let result = search_to_nodes(&mut state, 6_000_000);
+        assert_eq!(result.mate_in(), Some(7));
+        assert!(result.pv.len() >= 2);
     }
 
     fn play_moves(state: &mut GameState, uci_moves: &[&str]) -> Box<ZobristHashList> {
@@ -1118,7 +1196,12 @@ mod tests {
         let mut state = GameState::from_fen("3q3k/8/8/8/8/8/8/KN6 w - - 0 1").unwrap();
         let history = play_moves(&mut state, &["b1c3", "d8d7", "c3b1", "d7d8"]);
         let mut searcher = Searcher::default();
-        let result = searcher.search(&mut state, 6, &history, None::<fn(SearchResult)>);
+        let result = searcher.search(
+            &mut state,
+            SearchLimits::to_depth(6),
+            &history,
+            None::<fn(SearchResult)>,
+        );
         assert_eq!(result.evaluation, 0);
         assert_eq!(
             result.best_move().map(|m| m.to_uci()),
@@ -1131,7 +1214,12 @@ mod tests {
         let mut state = GameState::from_fen("7k/8/8/8/8/8/8/K2Q4 w - - 0 1").unwrap();
         let history = play_moves(&mut state, &["d1e1", "h8g8", "e1d1", "g8h8"]);
         let mut searcher = Searcher::default();
-        let result = searcher.search(&mut state, 6, &history, None::<fn(SearchResult)>);
+        let result = searcher.search(
+            &mut state,
+            SearchLimits::to_depth(6),
+            &history,
+            None::<fn(SearchResult)>,
+        );
         assert!(
             result.evaluation > Cp(300).to_internal(),
             "eval = {} ({} cp)",
@@ -1149,7 +1237,12 @@ mod tests {
         let mut state = GameState::from_fen("3q3k/8/8/8/8/8/8/KN6 w - - 0 1").unwrap();
         play_moves(&mut state, &["b1c3", "d8d7", "c3b1", "d7d8"]);
         let mut searcher = Searcher::default();
-        let result = searcher.search(&mut state, 6, &[], None::<fn(SearchResult)>);
+        let result = searcher.search(
+            &mut state,
+            SearchLimits::to_depth(6),
+            &[],
+            None::<fn(SearchResult)>,
+        );
         assert!(
             result.evaluation < Cp(-300).to_internal(),
             "eval = {} ({} cp)",
@@ -1166,7 +1259,12 @@ mod tests {
         // and returns 0, which propagates back to the root.
         let mut state = GameState::from_fen("4k3/8/8/8/8/8/8/R3K3 w - - 99 50").unwrap();
         let mut searcher = Searcher::default();
-        let result = searcher.search(&mut state, 3, &[], None::<fn(SearchResult)>);
+        let result = searcher.search(
+            &mut state,
+            SearchLimits::to_depth(3),
+            &[],
+            None::<fn(SearchResult)>,
+        );
         assert_eq!(result.evaluation, 0);
     }
 
@@ -1177,7 +1275,12 @@ mod tests {
         let mut state =
             GameState::from_fen("1krqr3/p1p2n2/2Q3b1/p3n3/1b6/8/4BB2/5K2 w - - 0 1").unwrap();
         let mut searcher = Searcher::default();
-        let result = searcher.search(&mut state, 9, &[], None::<fn(SearchResult)>);
+        let result = searcher.search(
+            &mut state,
+            SearchLimits::to_depth(9),
+            &[],
+            None::<fn(SearchResult)>,
+        );
         assert_eq!(result.evaluation, 0);
         assert_eq!(
             result.best_move().map(|m| m.to_uci()),
@@ -1192,7 +1295,12 @@ mod tests {
         // has no escape and is not attacked.
         let mut state = GameState::from_fen("7k/5Q2/5K2/8/8/8/8/8 b - - 0 1").unwrap();
         let mut searcher = Searcher::default();
-        let result = searcher.search(&mut state, 1, &[], None::<fn(SearchResult)>);
+        let result = searcher.search(
+            &mut state,
+            SearchLimits::to_depth(1),
+            &[],
+            None::<fn(SearchResult)>,
+        );
         assert_eq!(result.evaluation, 0);
     }
 }

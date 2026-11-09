@@ -21,7 +21,7 @@ use std::thread;
 use crate::bitboard::{BitBoard, BitBoardMethods};
 use crate::core::*;
 use crate::nnue::{evaluate, Cp};
-use crate::search::{SearchResult, Searcher, MAX_PLY};
+use crate::search::{SearchLimits, SearchResult, Searcher};
 use crate::state::GameState;
 use crate::zobrist::ZobristHash;
 
@@ -317,7 +317,7 @@ impl UCIAdapter {
     ///
     /// The worker captures the bumped generation at launch and only
     /// emits `bestmove` if the counter still matches when the search
-    /// finishes. `go infinite` maps to depth `MAX_PLY`.
+    /// finishes. `go infinite` maps to an unbounded depth limit.
     ///
     /// The stop flag is cleared here, before the worker spawns, so a
     /// leftover `true` from a prior search can't abort the new one.
@@ -334,24 +334,20 @@ impl UCIAdapter {
         thread::spawn(move || {
             let mut searcher = searcher.lock().unwrap();
 
-            let depth = if go.infinite {
-                MAX_PLY as u8
-            } else {
-                go.depth.unwrap_or(MAX_PLY as u8)
+            let limits = SearchLimits {
+                depth: if go.infinite { None } else { go.depth },
+                nodes: go.nodes,
+                wtime: go.wtime,
+                btime: go.btime,
+                winc: go.winc,
+                binc: go.binc,
+                movestogo: go.movestogo,
+                movetime: go.movetime,
             };
-
-            searcher.update_clock(
-                go.wtime,
-                go.btime,
-                go.winc,
-                go.binc,
-                go.movestogo,
-                go.movetime,
-            );
 
             let result = searcher.search(
                 &mut state,
-                depth,
+                limits,
                 &past_position_keys,
                 Some(|info: SearchResult| {
                     if let Ok(mut writer) = out.lock() {
@@ -695,6 +691,7 @@ mod tests {
             winc: None,
             binc: None,
             movestogo: None,
+            nodes: None,
             infinite: true,
         }));
 
@@ -728,6 +725,7 @@ mod tests {
             winc: None,
             binc: None,
             movestogo: None,
+            nodes: None,
             infinite: true,
         }));
 
@@ -765,6 +763,7 @@ mod tests {
             winc: None,
             binc: None,
             movestogo: None,
+            nodes: None,
             infinite: true,
         }));
 

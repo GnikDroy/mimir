@@ -31,6 +31,8 @@ pub struct GoCommand {
     pub binc: Option<Duration>,
     /// Moves remaining until the next time control (`go movestogo N`).
     pub movestogo: Option<u32>,
+    /// Max nodes to search (`go nodes N`).
+    pub nodes: Option<u64>,
     /// `true` when the GUI sent `go infinite`. Search runs until `stop`.
     pub infinite: bool,
 }
@@ -46,6 +48,7 @@ impl GoCommand {
             winc: None,
             binc: None,
             movestogo: None,
+            nodes: None,
             infinite: false,
         }
     }
@@ -238,6 +241,10 @@ impl UCICommand {
                 "movestogo" => {
                     go.movestogo =
                         Self::next_value(&mut tokens).and_then(|value| value.parse::<u32>().ok());
+                }
+                "nodes" => {
+                    go.nodes =
+                        Self::next_value(&mut tokens).and_then(|value| value.parse::<u64>().ok());
                 }
                 "infinite" => {
                     go.infinite = true;
@@ -459,6 +466,7 @@ mod tests {
                 winc: None,
                 binc: None,
                 movestogo: None,
+                nodes: None,
                 infinite: false,
             })
         );
@@ -477,6 +485,7 @@ mod tests {
                 winc: None,
                 binc: None,
                 movestogo: None,
+                nodes: None,
                 infinite: false,
             })
         );
@@ -495,6 +504,7 @@ mod tests {
                 winc: None,
                 binc: None,
                 movestogo: None,
+                nodes: None,
                 infinite: false,
             })
         );
@@ -513,6 +523,7 @@ mod tests {
                 winc: Some(Duration::from_millis(5000)),
                 binc: Some(Duration::from_millis(5000)),
                 movestogo: None,
+                nodes: None,
                 infinite: false,
             })
         );
@@ -531,6 +542,26 @@ mod tests {
                 winc: None,
                 binc: None,
                 movestogo: Some(40),
+                nodes: None,
+                infinite: false,
+            })
+        );
+    }
+
+    #[test]
+    fn test_parse_go_nodes() {
+        let cmd = UCICommand::parse("go nodes 100000");
+        assert_eq!(
+            cmd,
+            UCICommand::Go(GoCommand {
+                depth: None,
+                movetime: None,
+                wtime: None,
+                btime: None,
+                winc: None,
+                binc: None,
+                movestogo: None,
+                nodes: Some(100000),
                 infinite: false,
             })
         );
@@ -645,6 +676,7 @@ mod tests {
                 winc: None,
                 binc: None,
                 movestogo: None,
+                nodes: None,
                 infinite: false,
             }))
         );

@@ -478,7 +478,7 @@ impl fmt::Display for SearchAnalytics {
 
 #[cfg(test)]
 mod tests {
-    use crate::search::{SearchResult, Searcher};
+    use crate::search::{SearchLimits, SearchResult, Searcher};
     use crate::state::GameState;
 
     /// Analytics target: a single fixed-depth search from the kiwipete position
@@ -490,7 +490,12 @@ mod tests {
         )
         .unwrap();
         let mut searcher = Searcher::default();
-        let result = searcher.search(&mut state, 14, &[], None::<fn(SearchResult)>);
+        let result = searcher.search(
+            &mut state,
+            SearchLimits::to_depth(14),
+            &[],
+            None::<fn(SearchResult)>,
+        );
         println!("Game: {}", state);
         result.analytics.print();
     }
@@ -501,7 +506,12 @@ mod tests {
     fn analytics_search_startpos() {
         let mut state = GameState::new();
         let mut searcher = Searcher::default();
-        let result = searcher.search(&mut state, 14, &[], None::<fn(SearchResult)>);
+        let result = searcher.search(
+            &mut state,
+            SearchLimits::to_depth(14),
+            &[],
+            None::<fn(SearchResult)>,
+        );
         result.analytics.print();
     }
 
@@ -515,7 +525,12 @@ mod tests {
         )
         .unwrap();
         let mut searcher = Searcher::default();
-        let result = searcher.search(&mut state, 14, &[], None::<fn(SearchResult)>);
+        let result = searcher.search(
+            &mut state,
+            SearchLimits::to_depth(14),
+            &[],
+            None::<fn(SearchResult)>,
+        );
         result.analytics.print();
     }
 }

@@ -851,27 +851,12 @@ impl Searcher {
             return SearchStatus::Complete(0);
         }
 
-        // Generate moves so we can detect checkmate/stalemate before any
-        // quiet-move filtering would hide them.
-        let mut buf = MoveScore::new();
-        state.generate_moves(buf.moves_mut());
-        if buf.is_empty() {
-            if state.is_in_check(state.side_to_move) {
-                return SearchStatus::Complete(score::mated(ply));
-            } else {
-                return SearchStatus::Complete(0);
-            }
-        }
-
         let in_check = state.is_in_check(state.side_to_move);
 
-        // If not in check, keep only captures and promotions
-        if !in_check {
-            buf.moves_mut()
-                .retain(|&mv| mv.is_capture() || mv.is_promotion());
-        }
-
-        // Stand-pat is only valid when not in check
+        // Stand-pat before movegen.
+        // The cost is stalemate blindness, a stalemate node is
+        // scored by static eval instead of 0. Stalemates behind quiet
+        // moves were cannot be visible in quiescence search.
         let stand_pat = if !in_check {
             let sp = evaluate(state);
             self.analytics.quiescence_stand_pat_attempts += 1;
@@ -884,6 +869,20 @@ impl Searcher {
         } else {
             None
         };
+
+        let mut buf = MoveScore::new();
+        state.generate_moves(buf.moves_mut());
+
+        if in_check {
+            // We need to ensure that there is no checkmate
+            if buf.is_empty() {
+                return SearchStatus::Complete(score::mated(ply));
+            }
+        } else {
+            // Keep only captures and promotions.
+            buf.moves_mut()
+                .retain(|&mv| mv.is_capture() || mv.is_promotion());
+        }
 
         // Move scoring
         buf.score_quiescence();

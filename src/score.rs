@@ -14,7 +14,6 @@ pub const MATE_SCORE: i32 = i32::MAX / 2;
 
 /// Score for delivering mate `ply` plies from the root.
 #[inline(always)]
-#[allow(dead_code)]
 pub fn mate(ply: usize) -> i32 {
     MATE_SCORE - ply as i32
 }

@@ -423,6 +423,15 @@ impl Searcher {
             return SearchStatus::Complete((None, evaluate(state)));
         }
 
+        // Mate distance pruning
+        if ply > 0 {
+            alpha = alpha.max(score::mated(ply));
+            beta = beta.min(score::mate(ply + 1));
+            if alpha >= beta {
+                return SearchStatus::Complete((None, alpha));
+            }
+        }
+
         // Check extension: spend one extra ply when the side to move is in check.
         // Applied before quiescence so we never drop into quiescence while in check.
         let in_check = state.is_in_check(state.side_to_move);

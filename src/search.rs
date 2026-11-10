@@ -557,8 +557,6 @@ impl Searcher {
         //   passing the move is very unlikely to fail high.
         const NMP_MIN_DEPTH: u8 = 3;
 
-        // Historically 2 gives good reduction, but can do adaptive reduction later.
-        const NMP_REDUCTION: u8 = 2;
         if ply > 0
             && do_null
             && !in_check
@@ -568,16 +566,16 @@ impl Searcher {
             && static_eval.is_some_and(|e| e >= beta)
         {
             self.analytics.null_move_attempts += 1;
+
+            // Adaptive NMP reduction
+            const NMP_BASE_REDUCTION: u8 = 3;
+            const NMP_DEPTH_DIVISOR: u8 = 4;
+            let reduction = NMP_BASE_REDUCTION + depth / NMP_DEPTH_DIVISOR;
+            let null_depth = depth.saturating_sub(1 + reduction);
+
             let undo = state.make_null_move();
             let null_status = self
-                .alpha_beta(
-                    state,
-                    depth - 1 - NMP_REDUCTION,
-                    ply + 1,
-                    -beta,
-                    -beta + 1,
-                    false,
-                )
+                .alpha_beta(state, null_depth, ply + 1, -beta, -beta + 1, false)
                 .map(|(_, e)| -e);
             state.unmake_null_move(&undo);
             let null_score = null_status?;

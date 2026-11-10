@@ -516,7 +516,7 @@ fn add_pawn_move(
 
 #[cfg(test)]
 mod tests {
-    use once_cell::sync::Lazy;
+    use std::sync::LazyLock;
 
     use crate::attack_table::ATTACK_TABLE;
     use crate::bitboard::*;
@@ -532,7 +532,7 @@ mod tests {
     }
 
     fn assert_perft_case(fen: &str, expected_perft: &[u64]) {
-        Lazy::force(&ATTACK_TABLE);
+        LazyLock::force(&ATTACK_TABLE);
         let mut state = GameState::from_fen(fen).unwrap();
         for (depth, perft_count) in expected_perft.iter().enumerate() {
             let start_time = Instant::now();

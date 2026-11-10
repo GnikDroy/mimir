@@ -15,7 +15,7 @@ pub mod bench;
 pub mod options;
 pub mod parser;
 
-use once_cell::sync::Lazy;
+use std::sync::LazyLock;
 
 use crate::ATTACK_TABLE;
 
@@ -28,7 +28,7 @@ use crate::ATTACK_TABLE;
 /// `false` (e.g. on `quit`) or when stdin is exhausted.
 pub fn run() {
     // We forces attack table generation so the cost is paid up-front rather than mid-game.
-    Lazy::force(&ATTACK_TABLE);
+    LazyLock::force(&ATTACK_TABLE);
 
     let mut adapter = adapter::UCIAdapter::new();
 
@@ -43,7 +43,7 @@ pub fn run() {
 ///
 /// Forces the global [`ATTACK_TABLE`] to initialize up front
 pub fn run_command(command: &str) {
-    Lazy::force(&ATTACK_TABLE);
+    LazyLock::force(&ATTACK_TABLE);
 
     let mut adapter = adapter::UCIAdapter::new();
     adapter.handle_command(parser::UCICommand::parse(command));

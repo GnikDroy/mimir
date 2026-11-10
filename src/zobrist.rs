@@ -33,8 +33,8 @@ pub struct ZobristHasher {
 }
 
 /// Process-wide singleton hash key table.
-pub static ZOBRIST_HASHER: once_cell::sync::Lazy<ZobristHasher> =
-    once_cell::sync::Lazy::new(ZobristHasher::new);
+pub static ZOBRIST_HASHER: std::sync::LazyLock<ZobristHasher> =
+    std::sync::LazyLock::new(ZobristHasher::new);
 
 impl ZobristHasher {
     /// Generates a deterministic key set.

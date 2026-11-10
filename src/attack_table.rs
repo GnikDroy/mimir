@@ -8,10 +8,10 @@
 //!
 //! Magics are searched at startup with [`AttackTable::find_magic`] using
 //! sparse random candidates. The global [`ATTACK_TABLE`] is a
-//! [`Lazy`] singleton.
+//! [`LazyLock`] singleton.
 
 use crate::rng::SplitMix64;
-use once_cell::sync::Lazy;
+use std::sync::LazyLock;
 
 use crate::bitboard::*;
 use crate::core::*;
@@ -552,7 +552,7 @@ impl AttackTable {
 }
 
 /// Process-wide singleton attack table.
-pub static ATTACK_TABLE: Lazy<AttackTable> = Lazy::new(AttackTable::new);
+pub static ATTACK_TABLE: LazyLock<AttackTable> = LazyLock::new(AttackTable::new);
 
 #[cfg(test)]
 mod tests {

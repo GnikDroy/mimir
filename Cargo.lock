@@ -35,7 +35,6 @@ name = "mimir"
 version = "0.1.0"
 dependencies = [
  "num_enum",
- "once_cell",
 ]
 
 [[package]]

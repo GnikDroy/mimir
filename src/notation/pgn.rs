@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 use std::fmt::{self, Display, Write};
 
-use once_cell::sync::Lazy;
+use std::sync::LazyLock;
 
 use crate::core::*;
 use crate::notation::san::SAN;
@@ -139,7 +139,7 @@ impl From<PGN> for String {
 /// `test_uci_to_pgn_all_carlsen_games`). The stored `Move` only carries
 /// the fields [`PGN::uci_matches`] compares against, piece type and
 /// move-type flags come from the live legal-move list at lookup time.
-static UCI_MOVE_CACHE: Lazy<HashMap<String, Move>> = Lazy::new(|| {
+static UCI_MOVE_CACHE: LazyLock<HashMap<String, Move>> = LazyLock::new(|| {
     #[inline(always)]
     fn promotion_uci_char(piece: PromotionPiece) -> char {
         match piece {

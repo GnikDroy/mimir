@@ -28,6 +28,31 @@ use crate::zobrist::ZobristHash;
 use super::options::EngineOptions;
 use super::parser::{GoCommand, UCICommand};
 
+/// Text printed by the `help` command.
+const HELP: &str = "\
+mimir is a UCI chess engine. Commands:
+
+  uci                 identify and list options
+  isready             reply readyok when idle
+  ucinewgame          clear state for a new game
+  setoption name <n> [value <v>]
+  position [startpos | fen <fen>] [moves <m>...]
+  go [depth N] [nodes N] [movetime ms] [wtime ms] [btime ms]
+     [winc ms] [binc ms] [movestogo N] [infinite]
+  go perft <depth>    count leaf nodes per root move
+  stop                end the search, report bestmove
+  quit                exit
+
+Non-standard:
+  display             board, FEN and Zobrist key
+  eval                static evaluation
+  flip                mirror the position onto the other colour
+  perft <depth>       same as `go perft`
+  bench [depth]       fixed-workload node count
+  license             licensing information
+  help                this message
+";
+
 /// Engine-side UCI runtime: position, generation counter, and writer.
 ///
 /// The writer is shared (`Arc<Mutex<...>>`) between the main thread and
@@ -205,9 +230,36 @@ impl UCIAdapter {
                 let mut state = self.state;
                 Self::write_perft_divide(&mut state, depth, &mut *out).ok();
             }
+            UCICommand::Flip => {
+                // Replaces the position, so any current search should be stopped.
+                self.abort_search();
+                if let Some(state) = self.state.flipped() {
+                    self.state = state;
+                    self.past_position_keys.clear();
+                }
+                let mut out = self.out.lock().unwrap();
+                Self::write_display(&self.state, &mut *out).ok();
+            }
+            UCICommand::Help => {
+                let mut out = self.out.lock().unwrap();
+                Self::write_help(&mut *out).ok();
+            }
+            UCICommand::Bench(depth) => {
+                let depth = depth.unwrap_or(super::bench::DEFAULT_DEPTH);
+                let mut out = self.out.lock().unwrap();
+                super::bench::run(depth, &mut *out).ok();
+            }
+            UCICommand::License => {
+                let mut out = self.out.lock().unwrap();
+                writeln!(out, "{}", include_str!("../../LICENSE").trim_end()).ok();
+            }
             UCICommand::Unknown(_) => {}
         }
         true
+    }
+
+    fn write_help<W: std::io::Write>(writer: &mut W) -> std::io::Result<()> {
+        write!(writer, "{HELP}")
     }
 
     /// Renders the position to `writer` as an ASCII board plus FEN and Zobrist key.

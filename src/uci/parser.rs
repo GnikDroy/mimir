@@ -102,6 +102,15 @@ pub enum UCICommand {
     Display,
     /// `eval`, non-standard extension. Print the static evaluation.
     Eval,
+    /// `flip`, non-standard extension. Swap the side to move.
+    Flip,
+    /// `help`, non-standard extension. List supported commands.
+    Help,
+    /// `license`, non-standard extension. Print licensing information.
+    License,
+    /// `bench [depth]`, non-standard extension. Search a fixed list of
+    /// positions to a fixed depth and report statistics.
+    Bench(Option<u8>),
     /// `perft <depth>`, non-standard extension. Print perft divide.
     Perft(u8),
     /// Any input that did not parse as a known command. The wrapped
@@ -153,6 +162,10 @@ impl UCICommand {
             "quit" => Self::Quit,
             "display" => Self::Display,
             "eval" => Self::Eval,
+            "flip" => Self::Flip,
+            "help" => Self::Help,
+            "license" => Self::License,
+            "bench" => Self::Bench(parts.next().and_then(|value| value.parse().ok())),
             "perft" => Self::parse_perft(parts.collect()),
             _ => Self::Unknown(line.to_string()),
         }
@@ -210,6 +223,8 @@ impl UCICommand {
 
         while let Some(token) = tokens.next() {
             match token {
+                // Compatibility with stockfish
+                "perft" => return Self::parse_perft(tokens.collect()),
                 "depth" => {
                     go.depth = Self::next_value(&mut tokens).and_then(|value| value.parse().ok())
                 }

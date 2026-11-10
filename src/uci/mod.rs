@@ -11,6 +11,7 @@
 //! read/dispatch loop until the GUI sends `quit` (or stdin closes).
 
 pub mod adapter;
+pub mod bench;
 pub mod options;
 pub mod parser;
 
@@ -36,4 +37,14 @@ pub fn run() {
             break;
         }
     }
+}
+
+/// Executes a single command and returns, without reading stdin.
+///
+/// Forces the global [`ATTACK_TABLE`] to initialize up front
+pub fn run_command(command: &str) {
+    Lazy::force(&ATTACK_TABLE);
+
+    let mut adapter = adapter::UCIAdapter::new();
+    adapter.handle_command(parser::UCICommand::parse(command));
 }

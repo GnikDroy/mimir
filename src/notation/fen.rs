@@ -18,6 +18,66 @@ use crate::core::*;
 use crate::state::*;
 use crate::zobrist::ZOBRIST_HASHER;
 
+/// Mirrors the FEN board
+/// Returns `None` if `fen` has fewer than the four fields
+pub fn flip(fen: &str) -> Option<String> {
+    fn swap_colour(text: &str) -> String {
+        text.chars()
+            .map(|c| {
+                if c.is_ascii_uppercase() {
+                    c.to_ascii_lowercase()
+                } else {
+                    c.to_ascii_uppercase()
+                }
+            })
+            .collect()
+    }
+
+    let mut fields = fen.split_whitespace();
+    let (board, side, castling, en_passant) = (
+        fields.next()?,
+        fields.next()?,
+        fields.next()?,
+        fields.next()?,
+    );
+
+    // The clocks is unaffected by a reflection.
+    let clocks: Vec<&str> = fields.collect();
+
+    // Flip ranks
+    let board = board
+        .split('/')
+        .rev()
+        .map(swap_colour)
+        .collect::<Vec<_>>()
+        .join("/");
+
+    let side = if side == "w" { "b" } else { "w" };
+
+    // Flip castling
+    let swapped = swap_colour(castling);
+    let castling: String = "KQkq".chars().filter(|c| swapped.contains(*c)).collect();
+    let castling = if castling.is_empty() {
+        "-".to_string()
+    } else {
+        castling
+    };
+
+    // Flip en passant square
+    let en_passant = match en_passant.strip_suffix('3') {
+        Some(file) => format!("{file}6"),
+        None => match en_passant.strip_suffix('6') {
+            Some(file) => format!("{file}3"),
+            None => en_passant.to_string(),
+        },
+    };
+
+    Some(format!(
+        "{board} {side} {castling} {en_passant} {}",
+        clocks.join(" "),
+    ))
+}
+
 impl GameState {
     /// Parses a FEN string into a [`GameState`].
     ///
@@ -254,6 +314,44 @@ impl FromStr for GameState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_flip_reflects_board_and_swaps_colours() {
+        assert_eq!(
+            flip("rnbqkb1r/1p2pppp/p2p1n2/8/3NP3/2N5/PPP2PPP/R1BQKB1R w KQkq - 0 6").unwrap(),
+            "r1bqkb1r/ppp2ppp/2n5/3np3/8/P2P1N2/1P2PPPP/RNBQKB1R b KQkq - 0 6",
+        );
+    }
+
+    #[test]
+    fn test_flip_twice_is_identity() {
+        for fen in [
+            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+            "rnbqkbnr/pppp1ppp/8/4p3/8/8/PPPPPPPP/RNBQKBNR w KQkq e6 0 2",
+            "4k3/8/8/8/8/8/8/R3K2R w KQ - 0 1",
+            "8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1",
+        ] {
+            assert_eq!(flip(&flip(fen).unwrap()).unwrap(), fen);
+        }
+    }
+
+    #[test]
+    fn test_flip_moves_en_passant_between_ranks_three_and_six() {
+        let flipped = flip("rnbqkbnr/pppp1ppp/8/4p3/8/8/PPPPPPPP/RNBQKBNR w KQkq e6 0 2").unwrap();
+        assert_eq!(flipped.split(' ').nth(3), Some("e3"));
+    }
+
+    #[test]
+    fn test_flip_leaves_absent_en_passant_and_castling_alone() {
+        let flipped = flip("8/8/4k3/8/4P3/4K3/8/8 w - - 0 1").unwrap();
+        assert_eq!(flipped.split(' ').nth(2), Some("-"));
+        assert_eq!(flipped.split(' ').nth(3), Some("-"));
+    }
+
+    #[test]
+    fn test_flip_rejects_truncated_fen() {
+        assert_eq!(flip("8/8/8/8/8/8/8/8 w"), None);
+    }
 
     #[test]
     fn test_fen_round_trip() {

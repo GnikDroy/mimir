@@ -10,8 +10,8 @@
 //! sparse random candidates. The global [`ATTACK_TABLE`] is a
 //! [`Lazy`] singleton.
 
+use crate::rng::SplitMix64;
 use once_cell::sync::Lazy;
-use rand::prelude::*;
 
 use crate::bitboard::*;
 use crate::core::*;
@@ -243,7 +243,8 @@ impl AttackTable {
             }
         }
 
-        let mut rng = rand::rng();
+        const MAGIC_SEED: u64 = 0x00A6_1C5B_11AC_1C5B;
+        let mut rng = SplitMix64::new(MAGIC_SEED);
         // Reused buffers.
         let mut table = vec![BitBoard::EMPTY; table_size];
         let mut used = vec![0u32; table_size];
@@ -251,7 +252,7 @@ impl AttackTable {
 
         loop {
             // Sparse magics tend to work better.
-            let magic = rng.random::<u64>() & rng.random::<u64>() & rng.random::<u64>();
+            let magic = rng.next_u64() & rng.next_u64() & rng.next_u64();
             let entry = MagicEntry { mask, magic, shift };
 
             if Self::try_make_table(

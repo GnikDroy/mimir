@@ -9,8 +9,8 @@
 //! En passant is keyed by *file* only (not full square), matching the
 //! standard Polyglot convention.
 
+use crate::rng::SplitMix64;
 use crate::{core::*, BitBoardMethods, GameState};
-use rand::prelude::*;
 
 /// 64-bit position hash used by the transposition table and the
 /// repetition detector.
@@ -37,16 +37,17 @@ pub static ZOBRIST_HASHER: once_cell::sync::Lazy<ZobristHasher> =
     once_cell::sync::Lazy::new(ZobristHasher::new);
 
 impl ZobristHasher {
-    /// Generates a fresh set of random keys.
+    /// Generates a deterministic key set.
     fn new() -> ZobristHasher {
-        let mut rng = rand::rng();
+        const SEED: u64 = 0x5EED_1F77_0BA5_E001;
+        let mut rng = SplitMix64::new(SEED);
         let table = std::array::from_fn(|_| {
-            std::array::from_fn(|_| std::array::from_fn(|_| rng.random::<u64>()))
+            std::array::from_fn(|_| std::array::from_fn(|_| rng.next_u64()))
         });
 
-        let side_is_black = rng.random::<u64>();
-        let castling_rights = std::array::from_fn(|_| rng.random::<u64>());
-        let en_passant = std::array::from_fn(|_| rng.random::<u64>());
+        let side_is_black = rng.next_u64();
+        let castling_rights = std::array::from_fn(|_| rng.next_u64());
+        let en_passant = std::array::from_fn(|_| rng.next_u64());
 
         ZobristHasher {
             square: table,

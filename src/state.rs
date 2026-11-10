@@ -177,6 +177,14 @@ impl GameState {
         !self.is_in_check(self.side_to_move) && self.no_moves()
     }
 
+    /// Mirrors the position so that it is other side to play
+    ///
+    /// Computed through FEN rather than editing bitboards so the derived
+    /// state (Zobrist hash, NNUE accumulators) is rebuilt correctly.
+    pub fn flipped(&self) -> Option<GameState> {
+        GameState::from_fen(&crate::notation::fen::flip(&self.to_fen())?).ok()
+    }
+
     #[inline]
     pub fn is_draw_by_insufficient_material(&self) -> bool {
         // Having major pieces or pawns means no draw.
@@ -554,6 +562,68 @@ impl GameState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const FLIP_CASES: [&str; 5] = [
+        "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+        "rnbqkb1r/1p2pppp/p2p1n2/8/3NP3/2N5/PPP2PPP/R1BQKB1R w KQkq - 0 6",
+        "rnbqkbnr/pppp1ppp/8/4p3/8/8/PPPPPPPP/RNBQKBNR w KQkq e6 0 2",
+        "4k3/8/8/8/8/8/8/R3K2R w KQ - 0 1",
+        "8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1",
+    ];
+
+    #[test]
+    fn test_flip_twice_is_the_original_position() {
+        for fen in FLIP_CASES {
+            let state = GameState::from_fen(fen).unwrap();
+            let there_and_back = state.flipped().unwrap().flipped().unwrap();
+            assert_eq!(there_and_back.to_fen(), fen, "flipping twice changed {fen}");
+        }
+    }
+
+    #[test]
+    fn test_flip_swaps_side_to_move() {
+        for fen in FLIP_CASES {
+            let state = GameState::from_fen(fen).unwrap();
+            assert_eq!(
+                state.flipped().unwrap().side_to_move,
+                state.side_to_move.opposite(),
+                "fen: {fen}",
+            );
+        }
+    }
+
+    #[test]
+    fn test_flip_mirrors_castling_rights() {
+        let state = GameState::from_fen("4k3/8/8/8/8/8/8/R3K2R w KQ - 0 1").unwrap();
+        assert_eq!(
+            state.flipped().unwrap().to_fen().split(' ').nth(2),
+            Some("kq")
+        );
+    }
+
+    #[test]
+    fn test_flip_reflects_en_passant_square() {
+        let state =
+            GameState::from_fen("rnbqkbnr/pppp1ppp/8/4p3/8/8/PPPPPPPP/RNBQKBNR w KQkq e6 0 2")
+                .unwrap();
+        assert_eq!(
+            state.flipped().unwrap().to_fen().split(' ').nth(3),
+            Some("e3")
+        );
+    }
+
+    #[test]
+    fn test_evaluation_is_colour_symmetric() {
+        for fen in FLIP_CASES {
+            let state = GameState::from_fen(fen).unwrap();
+            let flipped = state.flipped().unwrap();
+            assert_eq!(
+                crate::nnue::evaluate(&state),
+                crate::nnue::evaluate(&flipped),
+                "evaluation is not symmetric for {fen}",
+            );
+        }
+    }
 
     fn assert_insufficient(fen: &str, expected: bool) {
         let state = GameState::from_fen(fen).unwrap_or_else(|_| panic!("bad fen: {fen}"));

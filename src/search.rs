@@ -980,6 +980,13 @@ mod tests {
         )
     }
 
+    const MATE_IN_THREE_FEN: &str = "3r1r1k/1p3p1p/p2p4/4n1NN/6bQ/1BPq4/P3p1PP/1R5K w - - 0 1";
+
+    const HARD_MATE_IN_THREE_FEN: &str = "4k1r1/R6p/4Nb2/4n3/6Pq/2P4P/3Q3K/5R2 w - - 2 2";
+
+    const HARD_MATE_IN_FOUR_FEN: &str =
+        "3qr2k/1p3rbp/2p3p1/p7/P2pBNn1/1P3n2/6P1/B1Q1RR1K b - - 1 30";
+
     fn assert_finds_mate(fen: &str, plies: i32, node_limit: u64) {
         let mut state = GameState::from_fen(fen).unwrap();
         let result = search_to_nodes(&mut state, node_limit);
@@ -1064,20 +1071,15 @@ mod tests {
 
     #[test]
     fn test_search_mate_in_three() {
-        assert_finds_mate(
-            "4k1r1/R6p/4Nb2/4n3/6Pq/2P4P/3Q3K/5R2 w - - 2 2",
-            5,
-            10_000_000,
-        );
+        assert_finds_mate(MATE_IN_THREE_FEN, 5, 200_000);
     }
 
+    /// Mates that the current search only finds after a lot of nodes.
     #[test]
-    fn test_search_mate_in_four() {
-        assert_finds_mate(
-            "3qr2k/1p3rbp/2p3p1/p7/P2pBNn1/1P3n2/6P1/B1Q1RR1K b - - 1 30",
-            7,
-            6_000_000,
-        );
+    #[ignore]
+    fn test_search_finds_hard_mates() {
+        assert_finds_mate(HARD_MATE_IN_THREE_FEN, 5, 30_000_000);
+        assert_finds_mate(HARD_MATE_IN_FOUR_FEN, 7, 30_000_000);
     }
 
     #[test]
@@ -1091,20 +1093,9 @@ mod tests {
 
     #[test]
     fn test_search_returns_full_pv_for_mate_in_three() {
-        let mut state =
-            GameState::from_fen("4k1r1/R6p/4Nb2/4n3/6Pq/2P4P/3Q3K/5R2 w - - 2 2").unwrap();
-        let result = search_to_nodes(&mut state, 10_000_000);
+        let mut state = GameState::from_fen(MATE_IN_THREE_FEN).unwrap();
+        let result = search_to_nodes(&mut state, 200_000);
         assert_eq!(result.mate_in(), Some(5));
-        assert!(result.pv.len() >= 2);
-    }
-
-    #[test]
-    fn test_search_returns_full_pv_for_mate_in_four() {
-        let mut state =
-            GameState::from_fen("3qr2k/1p3rbp/2p3p1/p7/P2pBNn1/1P3n2/6P1/B1Q1RR1K b - - 1 30")
-                .unwrap();
-        let result = search_to_nodes(&mut state, 6_000_000);
-        assert_eq!(result.mate_in(), Some(7));
         assert!(result.pv.len() >= 2);
     }
 

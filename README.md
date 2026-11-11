@@ -2,6 +2,8 @@
 
 Mimir is a UCI compatible chess engine built from scratch.
 
+**[Play it in your browser](https://gnikdroy.github.io/mimir/)**. The engine runs client-side as WebAssembly.
+
 ## Features
 
 - [x] Bitboard move generation (legal & pseudo-legal) verified with perft tests.
@@ -19,6 +21,7 @@ Mimir is a UCI compatible chess engine built from scratch.
 - [x] Futility Pruning
 - [x] A UCI compatible interface with a soft-hard limit time scheduler.
 - [x] Playable on lichess [@playmimir](https://lichess.org/@/playmimir). Uses the lichess bot API. 
+- [x] Playable in the browser at [gnikdroy.github.io/mimir](https://gnikdroy.github.io/mimir/), compiled to WebAssembly.
 
 ## Building
 
@@ -37,6 +40,10 @@ cargo test --release
 ```
 
 ### WebAssembly
+
+The [live demo](https://gnikdroy.github.io/mimir/) is built from `web/` and
+published by `.github/workflows/pages.yml` on every push to `main`. To build
+and serve it locally:
 
 ```bash
 RUSTFLAGS="-C target-feature=+simd128" CARGO_PROFILE_RELEASE_DEBUG=false \

@@ -1,0 +1,57 @@
+name: Deploy web demo
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "web/**"
+      - "src/**"
+      - "resources/**"
+      - "Cargo.toml"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Let a running deploy finish rather than cancelling it half-published.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Build the WebAssembly module
+        env:
+          RUSTFLAGS: "-C target-feature=+simd128"
+          CARGO_PROFILE_RELEASE_DEBUG: "false"
+        run: |
+          cargo build --release --target wasm32-unknown-unknown --lib
+          cp target/wasm32-unknown-unknown/release/mimir.wasm web/
+
+      - name: Upload web/
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: web
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

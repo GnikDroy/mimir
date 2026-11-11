@@ -24,7 +24,7 @@ Mimir is a UCI compatible chess engine built from scratch.
 
 ### Requirements
 
-- Rust 1.70+ (for `#![feature(variant_count)]`)
+- Stable Rust, no nightly features and no dependencies
 - Standard build tools (cargo)
 
 ### Building and Testing
@@ -35,6 +35,19 @@ cargo build --release
 # Run all tests
 cargo test --release
 ```
+
+### WebAssembly
+
+```bash
+RUSTFLAGS="-C target-feature=+simd128" CARGO_PROFILE_RELEASE_DEBUG=false \
+    cargo build --release --target wasm32-unknown-unknown --lib
+cp target/wasm32-unknown-unknown/release/mimir.wasm web/
+
+# Browsers refuse ES modules and wasm over file://, so serve the directory.
+python3 -m http.server --directory web 8000
+```
+
+Runs at roughly two thirds the speed of the native binary.
 
 ### NNUE Training & Network
 

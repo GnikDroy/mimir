@@ -1,0 +1,21 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>mimir</title>
+<link rel="stylesheet" href="style.css">
+
+<h1>mimir</h1>
+<p>
+  UCI chess engine, compiled to WebAssembly. Try <code>help</code>,
+  <code>display</code>, <code>bench</code> or <code>go depth 14</code>.
+  A search cannot be interrupted, and its output arrives when it ends.
+</p>
+
+<div id="log">loading…</div>
+
+<form id="prompt">
+  <input id="cmd" autocomplete="off" autofocus placeholder="UCI command">
+  <button>send</button>
+  <button type="button" id="reset">reset</button>
+</form>
+
+<script type="module" src="index.js"></script>

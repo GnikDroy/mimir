@@ -1,0 +1,56 @@
+body {
+  font-family: ui-monospace, monospace;
+  max-width: 50rem;
+  margin: 2rem auto;
+  padding: 0 1rem;
+}
+
+#log {
+  height: 25rem;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  padding: .5rem;
+}
+
+.err {
+  color: #c00;
+}
+
+form {
+  display: flex;
+  gap: .5rem;
+  margin-top: .5rem;
+}
+
+input,
+button {
+  font: inherit;
+  padding: .4rem .6rem;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  background: none;
+  color: inherit;
+}
+
+input {
+  flex: 1;
+}
+
+input:focus {
+  outline: none;
+  border-color: #888;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:hover {
+  border-color: #888;
+}
+
+button:active {
+  background: #f0f0f0;
+}

@@ -10,7 +10,7 @@ pub enum Color {
 
 impl Color {
     /// Number of variants. Usable as the size of per-colour lookup arrays.
-    pub const NUM: usize = std::mem::variant_count::<Color>();
+    pub const NUM: usize = 2;
 
     /// Reconstructs a [`Color`] from its discriminant.
     ///

@@ -18,7 +18,7 @@ pub enum Piece {
 
 impl Piece {
     /// Number of piece kinds. Usable as the size of per-piece lookup arrays.
-    pub const NUM: usize = std::mem::variant_count::<Piece>();
+    pub const NUM: usize = 6;
 
     /// Reconstructs a [`Piece`] from its discriminant.
     ///

@@ -19,7 +19,7 @@ pub enum File {
 
 impl File {
     /// Number of files (always 8).
-    pub const NUM: usize = std::mem::variant_count::<File>();
+    pub const NUM: usize = 8;
 
     /// Reconstructs a [`File`] from its discriminant.
     ///

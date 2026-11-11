@@ -15,7 +15,7 @@ pub enum PromotionPiece {
 
 impl PromotionPiece {
     /// Number of promotion targets (always 4).
-    pub const NUM: u8 = std::mem::variant_count::<PromotionPiece>() as u8;
+    pub const NUM: u8 = 4;
 
     /// Reconstructs a [`PromotionPiece`] from its discriminant.
     ///

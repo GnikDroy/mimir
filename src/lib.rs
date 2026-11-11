@@ -1,4 +1,3 @@
-#![feature(variant_count)]
 #![feature(try_trait_v2)]
 #![feature(try_trait_v2_residual)]
 

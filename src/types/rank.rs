@@ -20,7 +20,7 @@ pub enum Rank {
 
 impl Rank {
     /// Number of ranks (always 8).
-    pub const NUM: usize = std::mem::variant_count::<Rank>();
+    pub const NUM: usize = 8;
 
     /// Reconstructs a [`Rank`] from its discriminant.
     ///

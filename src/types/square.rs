@@ -26,7 +26,7 @@ pub enum Square {
 
 impl Square {
     /// Number of squares (always 64).
-    pub const NUM: usize = std::mem::variant_count::<Square>();
+    pub const NUM: usize = 64;
 
     /// Reconstructs a [`Square`] from its discriminant.
     ///

@@ -30,6 +30,9 @@ pub mod time;
 pub mod time_control;
 pub mod transposition_table;
 pub mod uci;
+
+#[cfg(target_arch = "wasm32")]
+pub mod wasm;
 pub mod zobrist;
 
 pub use attack_table::ATTACK_TABLE;

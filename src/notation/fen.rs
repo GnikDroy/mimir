@@ -18,6 +18,23 @@ use crate::core::*;
 use crate::state::*;
 use crate::zobrist::ZOBRIST_HASHER;
 
+/// The FEN letter for a piece: uppercase for White, lowercase for Black.
+pub fn piece_char(color: Color, piece: Piece) -> char {
+    let letter = match piece {
+        Piece::Pawn => 'P',
+        Piece::Knight => 'N',
+        Piece::Bishop => 'B',
+        Piece::Rook => 'R',
+        Piece::Queen => 'Q',
+        Piece::King => 'K',
+    };
+
+    match color {
+        Color::White => letter,
+        Color::Black => letter.to_ascii_lowercase(),
+    }
+}
+
 /// Mirrors the FEN board
 /// Returns `None` if `fen` has fewer than the four fields
 pub fn flip(fen: &str) -> Option<String> {
@@ -210,41 +227,16 @@ impl GameState {
             for file in 0..8 {
                 let square_index = rank * 8 + file;
                 let square = Square::index(square_index as u8);
-                let mut piece_char = None;
 
-                for color in Color::all() {
-                    for piece in Piece::all() {
-                        if self.pieces[color as usize][piece as usize] & BitBoard::on(square) != 0 {
-                            piece_char = Some(match (color, piece) {
-                                (Color::White, Piece::Pawn) => 'P',
-                                (Color::White, Piece::Knight) => 'N',
-                                (Color::White, Piece::Bishop) => 'B',
-                                (Color::White, Piece::Rook) => 'R',
-                                (Color::White, Piece::Queen) => 'Q',
-                                (Color::White, Piece::King) => 'K',
-                                (Color::Black, Piece::Pawn) => 'p',
-                                (Color::Black, Piece::Knight) => 'n',
-                                (Color::Black, Piece::Bishop) => 'b',
-                                (Color::Black, Piece::Rook) => 'r',
-                                (Color::Black, Piece::Queen) => 'q',
-                                (Color::Black, Piece::King) => 'k',
-                            });
-                            break;
+                match self.piece_at(square) {
+                    Some((color, piece)) => {
+                        if empty_count > 0 {
+                            fen.push_str(&empty_count.to_string());
+                            empty_count = 0;
                         }
+                        fen.push(piece_char(color, piece));
                     }
-                    if piece_char.is_some() {
-                        break;
-                    }
-                }
-
-                if let Some(ch) = piece_char {
-                    if empty_count > 0 {
-                        fen.push_str(&empty_count.to_string());
-                        empty_count = 0;
-                    }
-                    fen.push(ch);
-                } else {
-                    empty_count += 1;
+                    None => empty_count += 1,
                 }
             }
             if empty_count > 0 {

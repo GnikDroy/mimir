@@ -105,6 +105,26 @@ impl Default for GameState {
 }
 
 impl GameState {
+    /// Returns the colour and kind of the piece standing on `square`,
+    /// or [`None`] when the square is empty.
+    pub fn piece_at(&self, square: Square) -> Option<(Color, Piece)> {
+        let mask = BitBoard::on(square);
+        if self.occupancies[2] & mask == 0 {
+            return None;
+        }
+
+        for color in Color::all() {
+            if self.occupancies[color as usize] & mask != 0 {
+                for piece in Piece::all() {
+                    if self.pieces[color as usize][piece as usize] & mask != 0 {
+                        return Some((color, piece));
+                    }
+                }
+            }
+        }
+        None
+    }
+
     /// Returns `true` if any piece of color `attacker` attacks `sq` in
     /// the current position. Used for both check detection and castling
     /// safety. Does not require `sq` to be occupied or empty.

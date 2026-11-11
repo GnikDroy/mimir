@@ -16,42 +16,19 @@ use std::sync::{
     atomic::{AtomicBool, AtomicU64, Ordering},
     Arc, Mutex,
 };
+#[cfg(not(target_arch = "wasm32"))]
 use std::thread;
 
-use crate::bitboard::{BitBoard, BitBoardMethods};
 use crate::core::*;
 use crate::nnue::{evaluate, Cp};
-use crate::search::{SearchLimits, SearchResult, Searcher};
+use crate::search::Searcher;
 use crate::state::GameState;
 use crate::zobrist::ZobristHash;
 
 use super::options::EngineOptions;
 use super::parser::{GoCommand, UCICommand};
-
-/// Text printed by the `help` command.
-const HELP: &str = "\
-mimir is a UCI chess engine. Commands:
-
-  uci                 identify and list options
-  isready             reply readyok when idle
-  ucinewgame          clear state for a new game
-  setoption name <n> [value <v>]
-  position [startpos | fen <fen>] [moves <m>...]
-  go [depth N] [nodes N] [movetime ms] [wtime ms] [btime ms]
-     [winc ms] [binc ms] [movestogo N] [infinite]
-  go perft <depth>    count leaf nodes per root move
-  stop                end the search, report bestmove
-  quit                exit
-
-Non-standard:
-  display             board, FEN and Zobrist key
-  eval                static evaluation
-  flip                mirror the position onto the other colour
-  perft <depth>       same as `go perft`
-  bench [depth]       fixed-workload node count
-  license             licensing information
-  help                this message
-";
+use super::response;
+use super::search_job::SearchJob;
 
 /// Engine-side UCI runtime: position, generation counter, and writer.
 ///
@@ -116,50 +93,6 @@ impl UCIAdapter {
         self.stop_flag.store(true, Ordering::SeqCst);
     }
 
-    /// Formats a [`SearchResult`] as a single UCI `info` line.
-    ///
-    /// Mate scores are converted from plies to moves (UCI convention).
-    pub fn handle_info<W: std::io::Write>(
-        info: SearchResult,
-        writer: &mut W,
-    ) -> std::io::Result<()> {
-        let nodes = info.analytics.total_nodes();
-        let nps = info.analytics.nodes_per_second();
-        let time = info.analytics.elapsed.as_millis();
-        let seldepth = info.analytics.max_ply_reached.max(info.analytics.depth);
-
-        write!(
-            writer,
-            "info depth {} seldepth {} time {} nodes {} nps {} hashfull {} tbhits 0",
-            info.analytics.depth,
-            seldepth,
-            time,
-            nodes,
-            nps,
-            info.analytics.transposition_table_hashfull
-        )?;
-
-        match info.mate_in() {
-            Some(ply) => {
-                // UCI expects moves to mate, not plies until mate, therefore we divide by 2 and round up.
-                let ply_to_mate = ((ply.abs() + 1) / 2) * ply.signum();
-                write!(writer, " score mate {}", ply_to_mate)
-            }
-            None => write!(writer, " score cp {}", Cp::from_internal(info.evaluation)),
-        }?;
-
-        if !info.pv.is_empty() {
-            write!(writer, " pv")?;
-            for mv in &*info.pv {
-                write!(writer, " {}", mv.to_uci())?;
-            }
-        }
-
-        writeln!(writer)?;
-
-        Ok(())
-    }
-
     /// Dispatches one parsed UCI command. Returns `false` on `quit`.
     ///
     /// `position`, `ucinewgame`, and `quit` bump the generation counter
@@ -209,7 +142,7 @@ impl UCIAdapter {
             }
             UCICommand::Display => {
                 let mut out = self.out.lock().unwrap();
-                Self::write_display(&self.state, &mut *out).ok();
+                response::write_display(&self.state, &mut *out).ok();
             }
             UCICommand::Eval => {
                 let side = match self.state.side_to_move {
@@ -228,7 +161,7 @@ impl UCIAdapter {
             UCICommand::Perft(depth) => {
                 let mut out = self.out.lock().unwrap();
                 let mut state = self.state;
-                Self::write_perft_divide(&mut state, depth, &mut *out).ok();
+                response::write_perft_divide(&mut state, depth, &mut *out).ok();
             }
             UCICommand::Flip => {
                 // Replaces the position, so any current search should be stopped.
@@ -238,11 +171,11 @@ impl UCIAdapter {
                     self.past_position_keys.clear();
                 }
                 let mut out = self.out.lock().unwrap();
-                Self::write_display(&self.state, &mut *out).ok();
+                response::write_display(&self.state, &mut *out).ok();
             }
             UCICommand::Help => {
                 let mut out = self.out.lock().unwrap();
-                Self::write_help(&mut *out).ok();
+                write!(out, "{}", response::HELP).ok();
             }
             UCICommand::Bench(depth) => {
                 let depth = depth.unwrap_or(super::bench::DEFAULT_DEPTH);
@@ -256,79 +189,6 @@ impl UCIAdapter {
             UCICommand::Unknown(_) => {}
         }
         true
-    }
-
-    fn write_help<W: std::io::Write>(writer: &mut W) -> std::io::Result<()> {
-        write!(writer, "{HELP}")
-    }
-
-    /// Renders the position to `writer` as an ASCII board plus FEN and Zobrist key.
-    fn write_display<W: std::io::Write>(state: &GameState, writer: &mut W) -> std::io::Result<()> {
-        const SEPARATOR: &str = " +---+---+---+---+---+---+---+---+";
-
-        for rank in Rank::all().rev() {
-            writeln!(writer, "{}", SEPARATOR)?;
-            write!(writer, " |")?;
-            for file in File::all() {
-                let square = Square::index((rank as u8) * 8u8 + file as u8);
-                let ch = Self::piece_char_at(state, square).unwrap_or(' ');
-                write!(writer, " {} |", ch)?;
-            }
-            writeln!(writer, " {}", rank as u8 + 1)?;
-        }
-        writeln!(writer, "{}", SEPARATOR)?;
-        writeln!(writer, "   a   b   c   d   e   f   g   h")?;
-        writeln!(writer)?;
-        writeln!(writer, "Fen: {}", state.to_fen())?;
-        writeln!(writer, "Key: {:016X}", state.zobrist_hash)?;
-        Ok(())
-    }
-
-    /// Returns the FEN-style character for the piece occupying `square`,
-    /// or `None` when the square is empty.
-    fn piece_char_at(state: &GameState, square: Square) -> Option<char> {
-        let mask = BitBoard::on(square);
-        for color in Color::all() {
-            for piece in Piece::all() {
-                if state.pieces[color as usize][piece as usize] & mask != 0 {
-                    let mut piece_char = match piece {
-                        Piece::King => 'K',
-                        Piece::Queen => 'Q',
-                        Piece::Rook => 'R',
-                        Piece::Bishop => 'B',
-                        Piece::Knight => 'N',
-                        Piece::Pawn => 'P',
-                    };
-                    if color == Color::Black {
-                        piece_char = piece_char.to_ascii_lowercase();
-                    }
-                    return Some(piece_char);
-                }
-            }
-        }
-        None
-    }
-
-    /// Runs perft to `depth` from the current position and writes a
-    /// Stockfish-style divided node count followed by the total.
-    fn write_perft_divide<W: std::io::Write>(
-        state: &mut GameState,
-        depth: u8,
-        writer: &mut W,
-    ) -> std::io::Result<()> {
-        let mut total = 0u64;
-        if depth > 0 {
-            for (mv, count) in state.perft_divide(depth) {
-                if count == 0 {
-                    continue;
-                }
-                writeln!(writer, "{}: {}", mv.to_uci(), count)?;
-                total += count;
-            }
-        }
-        writeln!(writer)?;
-        writeln!(writer, "Nodes searched: {}", total)?;
-        Ok(())
     }
 
     /// Resets the position to `fen` (or the standard start when
@@ -365,73 +225,61 @@ impl UCIAdapter {
         }
     }
 
-    /// Spawns a search worker for `go` and returns immediately.
-    ///
-    /// The worker captures the bumped generation at launch and only
-    /// emits `bestmove` if the counter still matches when the search
-    /// finishes. `go infinite` maps to an unbounded depth limit.
-    ///
-    /// The stop flag is cleared here, before the worker spawns, so a
-    /// leftover `true` from a prior search can't abort the new one.
+    /// Starts the search on a worker thread and returns at once, so the
+    /// caller can keep reading stdin. That is what makes `stop`,
+    /// `position` and `ucinewgame` responsive mid-search.
+    #[cfg(not(target_arch = "wasm32"))]
     fn launch_search(&mut self, go: GoCommand) {
-        let generation = self.next_generation();
-        self.stop_flag.store(false, Ordering::SeqCst);
-        let generation_token = Arc::clone(&self.search_generation);
-        let stop_flag = Arc::clone(&self.stop_flag);
-        let out = Arc::clone(&self.out);
-        let searcher = Arc::clone(&self.searcher);
-        let mut state = self.state;
-        let past_position_keys = self.past_position_keys.clone();
+        let mut job = SearchJob::new(
+            Arc::clone(&self.searcher),
+            Arc::clone(&self.out),
+            Arc::clone(&self.search_generation),
+            Arc::clone(&self.stop_flag),
+            self.state,
+            self.past_position_keys.clone(),
+            go,
+        );
 
         thread::spawn(move || {
-            let mut searcher = searcher.lock().unwrap();
+            let result = job.search();
 
-            let limits = SearchLimits {
-                depth: if go.infinite { None } else { go.depth },
-                nodes: go.nodes,
-                wtime: go.wtime,
-                btime: go.btime,
-                winc: go.winc,
-                binc: go.binc,
-                movestogo: go.movestogo,
-                movetime: go.movetime,
-            };
-
-            let result = searcher.search(
-                &mut state,
-                limits,
-                &past_position_keys,
-                Some(|info: SearchResult| {
-                    if let Ok(mut writer) = out.lock() {
-                        // You can't get rid of ok() here.
-                        // There channel we used to report errors just died ;)
-                        Self::handle_info(info, &mut *writer).ok();
-                    }
-                }),
-            );
-
-            // the search may finish early but as per UCI spec
-            // we wait for "stop" or an aborting command
-            if go.infinite {
-                while !stop_flag.load(Ordering::SeqCst)
-                    && generation_token.load(Ordering::SeqCst) == generation
-                {
+            // The search may finish early, but the spec wants the result
+            // held back until `stop` arrives.
+            if job.is_infinite() {
+                while job.awaiting_stop() {
                     thread::sleep(std::time::Duration::from_millis(10));
                 }
             }
 
-            if generation_token.load(Ordering::SeqCst) == generation {
-                let msg = match result.best_move() {
-                    Some(best_move) => format!("bestmove {}", best_move.to_uci()),
-                    None => "bestmove 0000".to_string(),
-                };
-                if let Ok(mut writer) = out.lock() {
-                    // You can't get rid of ok() here.
-                    // There channel we used to report errors just died ;)
-                    writeln!(writer, "{}", msg).ok();
-                }
-            }
+            job.emit_bestmove(&result);
         });
+    }
+
+    /// Runs the search inline, returning once it is finished.
+    ///
+    /// wasm32 has no thread to spawn and no stdin
+    #[cfg(target_arch = "wasm32")]
+    fn launch_search(&mut self, go: GoCommand) {
+        if go.infinite {
+            if let Ok(mut writer) = self.out.lock() {
+                writeln!(writer, "info string go infinite not supported on wasm").ok();
+                writeln!(writer, "bestmove 0000").ok();
+            }
+            return;
+        }
+
+        let mut job = SearchJob::new(
+            Arc::clone(&self.searcher),
+            Arc::clone(&self.out),
+            Arc::clone(&self.search_generation),
+            Arc::clone(&self.stop_flag),
+            self.state,
+            self.past_position_keys.clone(),
+            go,
+        );
+
+        let result = job.search();
+        job.emit_bestmove(&result);
     }
 
     /// Resolves a UCI move string against the current position's legal
@@ -880,29 +728,5 @@ mod tests {
         let guard = output.lock().unwrap();
         let output_str = String::from_utf8_lossy(&guard);
         assert!(output_str.contains("Nodes searched: 20"));
-    }
-
-    #[test]
-    fn test_handle_info_with_best_move() {
-        let mut output = Vec::new();
-
-        let mv: Move = Move::from_quiet(Square::E2, Square::E4, Piece::Pawn);
-
-        let mut pv = crate::search::PvList::default();
-        pv.push(mv);
-        let info = SearchResult {
-            evaluation: crate::nnue::Cp(150).to_internal(),
-            analytics: crate::analytics::SearchAnalytics::default(),
-            pv,
-        };
-
-        let result = UCIAdapter::handle_info(info, &mut output);
-        assert!(result.is_ok());
-
-        let output_str = String::from_utf8_lossy(&output);
-        println!("Output: {}", output_str);
-        assert!(output_str.contains("info depth"));
-        assert!(output_str.contains("pv e2e4"));
-        assert!(output_str.contains("score cp 150"));
     }
 }

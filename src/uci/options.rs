@@ -13,7 +13,14 @@ use std::time::Duration;
 /// `Hash` (MB), transposition table size advertised to the GUI.
 pub const HASH_DEFAULT_MB: usize = 32;
 pub const HASH_MIN_MB: usize = 1;
+
+/// Largest hash table size we will accept on native builds.
+#[cfg(not(target_arch = "wasm32"))]
 pub const HASH_MAX_MB: usize = 4096;
+
+/// wasm32 has a maximum hash table size of 512 megabytes.
+#[cfg(target_arch = "wasm32")]
+pub const HASH_MAX_MB: usize = 512;
 
 /// `Move Overhead` (ms), safety buffer subtracted from each move's
 /// time budget to absorb UCI / GUI round-trip latency.

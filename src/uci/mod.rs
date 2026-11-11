@@ -6,6 +6,7 @@
 //!   [`parser::UCICommand`] values.
 //! - [`adapter`] holds the engine's runtime state and executes those
 //!   commands, dispatching searches onto a worker thread.
+//! - [`response`] renders the replies that go back to the GUI.
 //!
 //! [`run`] is the entry point invoked from `main` and drives the
 //! read/dispatch loop until the GUI sends `quit` (or stdin closes).
@@ -14,6 +15,8 @@ pub mod adapter;
 pub mod bench;
 pub mod options;
 pub mod parser;
+pub mod response;
+mod search_job;
 
 use std::sync::LazyLock;
 

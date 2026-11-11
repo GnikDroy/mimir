@@ -19,19 +19,15 @@ self.onmessage = async ({ data }) => {
     const engine = await loading;
 
     switch (data.type) {
-      case "command": {
-        const output = engine.send(String(data.text));
-        if (output.length > 0) {
-          self.postMessage({ type: "output", text: output });
-        }
+      case "command":
+        self.postMessage({ type: "output", id: data.id, text: engine.send(String(data.text)) });
         break;
-      }
       case "reset":
         engine.reset();
         self.postMessage({ type: "reset" });
         break;
     }
   } catch (error) {
-    self.postMessage({ type: "error", text: String(error) });
+    self.postMessage({ type: "error", id: data.id, text: String(error) });
   }
 };

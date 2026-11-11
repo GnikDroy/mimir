@@ -1,21 +1,51 @@
 <!doctype html>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>mimir</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/cm-chessboard@8.15.4/assets/chessboard.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/cm-chessboard@8.15.4/assets/extensions/promotion-dialog/promotion-dialog.css">
 <link rel="stylesheet" href="style.css">
 
 <h1>mimir</h1>
-<p>
-  UCI chess engine, compiled to WebAssembly. Try <code>help</code>,
-  <code>display</code>, <code>bench</code> or <code>go depth 14</code>.
-  A search cannot be interrupted, and its output arrives when it ends.
+<p class="tagline">
+  A superhuman chess engine with NNUE evaluation and zero dependencies,
+  compiled to WebAssembly. Around 3325 Elo on the CCRL Blitz scale.
+  -45 Elo on the web since the browser runs it at two thirds native speed.
+  <a href="https://github.com/gnikdroy/mimir">GitHub</a>
 </p>
 
-<div id="log">loading…</div>
+<div id="app">
+  <div id="play">
+    <div id="board"></div>
 
-<form id="prompt">
-  <input id="cmd" autocomplete="off" autofocus placeholder="UCI command">
-  <button>send</button>
-  <button type="button" id="reset">reset</button>
-</form>
+    <div id="bar">
+      <span id="status">
+        <span id="turn" aria-hidden="true"></span>
+        <span id="status-text">loading…</span>
+      </span>
+
+      <span id="controls">
+        <button id="new-game" type="button" title="New game" aria-label="New game">↻</button>
+
+        <span id="side" role="group" aria-label="Play as">
+          <button type="button" data-side="w" class="active"
+                  title="Play as white" aria-label="Play as white"></button>
+          <button type="button" data-side="b"
+                  title="Play as black" aria-label="Play as black"></button>
+        </span>
+
+        <select id="movetime" title="Thinking time" aria-label="Thinking time">
+          <option value="200">0.2s</option>
+          <option value="1000" selected>1s</option>
+          <option value="3000">3s</option>
+          <option value="5000">5s</option>
+          <option value="10000">10s</option>
+        </select>
+      </span>
+    </div>
+  </div>
+
+  <div id="log"></div>
+</div>
 
 <script type="module" src="index.js"></script>

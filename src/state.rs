@@ -174,6 +174,34 @@ impl GameState {
         self.is_square_attacked(Square::index(king_bb.trailing_zeros() as u8), enemy)
     }
 
+    /// Enemy pieces currently giving check to the side to move.
+    ///
+    /// Mirrors [`is_square_attacked`](Self::is_square_attacked) without
+    /// early exits. Only the `display` command needs this, so the extra
+    /// work stays off the search path.
+    pub fn checkers(&self) -> BitBoard {
+        let us = self.side_to_move;
+        let them = us.opposite();
+        let king_bb = self.pieces[us as usize][Piece::King as usize];
+        let sq = Square::index(king_bb.trailing_zeros() as u8);
+        let sq_bb = BitBoard::on(sq);
+
+        let occ = self.occupancies[2];
+        let enemy = &self.pieces[them as usize];
+
+        let pawn_sources = match them {
+            Color::White => sq_bb.shift_south_east() | sq_bb.shift_south_west(),
+            Color::Black => sq_bb.shift_north_east() | sq_bb.shift_north_west(),
+        };
+
+        ATTACK_TABLE.get_rook(sq, occ)
+            & (enemy[Piece::Rook as usize] | enemy[Piece::Queen as usize])
+            | ATTACK_TABLE.get_bishop(sq, occ)
+                & (enemy[Piece::Bishop as usize] | enemy[Piece::Queen as usize])
+            | ATTACK_TABLE.get_knight(sq) & enemy[Piece::Knight as usize]
+            | pawn_sources & enemy[Piece::Pawn as usize]
+    }
+
     // Checks if no legal moves exist.
     fn no_moves(&self) -> bool {
         let mut moves = MoveList::default();

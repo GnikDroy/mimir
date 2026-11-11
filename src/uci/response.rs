@@ -2,6 +2,7 @@
 
 use std::io::Write;
 
+use crate::bitboard::BitBoardMethods;
 use crate::core::*;
 use crate::nnue::Cp;
 use crate::notation::fen::piece_char;
@@ -24,7 +25,7 @@ mimir is a UCI chess engine. Commands:
   quit                exit
 
 Non-standard:
-  display             board, FEN and Zobrist key
+  display             board, FEN, Zobrist key and checkers
   eval                static evaluation
   flip                mirror the position onto the other colour
   perft <depth>       same as `go perft`
@@ -74,7 +75,8 @@ pub fn write_info<W: Write>(info: SearchResult, writer: &mut W) -> std::io::Resu
     Ok(())
 }
 
-/// Renders the position as an ASCII board plus FEN and Zobrist key.
+/// Renders the position as an ASCII board plus FEN, Zobrist key and
+/// the squares of any pieces giving check.
 pub fn write_display<W: Write>(state: &GameState, writer: &mut W) -> std::io::Result<()> {
     const SEPARATOR: &str = " +---+---+---+---+---+---+---+---+";
 
@@ -96,6 +98,13 @@ pub fn write_display<W: Write>(state: &GameState, writer: &mut W) -> std::io::Re
     writeln!(writer)?;
     writeln!(writer, "Fen: {}", state.to_fen())?;
     writeln!(writer, "Key: {:016X}", state.zobrist_hash)?;
+
+    write!(writer, "Checkers:")?;
+    for square in state.checkers().iter() {
+        write!(writer, " {}", square.to_algebraic())?;
+    }
+    writeln!(writer)?;
+
     Ok(())
 }
 
@@ -187,6 +196,45 @@ mod tests {
             })
             .collect();
         assert_eq!(rows, expected);
+    }
+
+    #[test]
+    fn test_write_display_checkers() {
+        const MATE: &str = "rnb1kbnr/pppp1ppp/8/4p3/6Pq/5P2/PPPPP2P/RNBQKBNR w KQkq - 1 3";
+        const STALEMATE: &str = "7k/5Q2/6K1/8/8/8/8/8 b - - 0 1";
+
+        let cases = [
+            (MATE, "Checkers: h4"),
+            (STALEMATE, "Checkers:"),
+            // Double check: both checking pieces must be listed.
+            ("4k3/8/3N4/8/8/8/8/4R1K1 b - - 0 1", "Checkers: e1 d6"),
+            // Pawns check too, and are easy to miss in an attack scan.
+            ("3k4/4P3/8/8/8/8/8/4K3 b - - 0 1", "Checkers: e7"),
+            (
+                "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+                "Checkers:",
+            ),
+        ];
+
+        for (fen, expected) in cases {
+            let state = GameState::from_fen(fen).unwrap();
+            let mut output = Vec::new();
+            write_display(&state, &mut output).unwrap();
+
+            let rendered = String::from_utf8_lossy(&output);
+            let line = rendered
+                .lines()
+                .find(|line| line.starts_with("Checkers:"))
+                .expect("display omitted the Checkers line");
+            assert_eq!(line, expected, "for {}", fen);
+        }
+
+        for fen in [MATE, STALEMATE] {
+            let state = GameState::from_fen(fen).unwrap();
+            let mut moves = MoveList::default();
+            state.generate_moves(&mut moves);
+            assert!(moves.is_empty(), "{} should be terminal", fen);
+        }
     }
 
     #[test]

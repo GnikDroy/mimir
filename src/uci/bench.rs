@@ -1,6 +1,6 @@
 //! Searches a fixed list of positions to a fixed depth and reports the
 //! total node count, elapsed time and speed.
-use std::time::Instant;
+use crate::time::Instant;
 
 use crate::search::{SearchLimits, SearchResult, Searcher};
 use crate::state::GameState;

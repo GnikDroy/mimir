@@ -709,7 +709,7 @@ mod tests {
     /// Poll `output` until it contains `needle` or the timeout elapses.
     /// Returns whether the substring was observed in time.
     fn wait_for(output: &Arc<Mutex<Vec<u8>>>, needle: &str, timeout: std::time::Duration) -> bool {
-        let start = std::time::Instant::now();
+        let start = crate::time::Instant::now();
         while start.elapsed() < timeout {
             {
                 let guard = output.lock().unwrap();

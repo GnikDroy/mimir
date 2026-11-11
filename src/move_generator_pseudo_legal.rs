@@ -384,7 +384,7 @@ mod tests {
     use crate::bitboard::*;
     use crate::core::*;
     use crate::state::GameState;
-    use std::time::Instant;
+    use crate::time::Instant;
 
     fn set_piece(state: &mut GameState, color: Color, piece: Piece, square: Square) {
         let board = BitBoard::on(square);

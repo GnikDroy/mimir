@@ -10,7 +10,9 @@
 //! buffer. Soft is `base / SOFT_DIVISOR`, hard is `base`. See
 //! [Chess Programming Wiki](https://www.chessprogramming.org/Time_Management).
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use crate::time::Instant;
 
 use crate::core::Color;
 

@@ -26,6 +26,7 @@ pub mod search;
 pub mod search_status;
 pub mod see;
 pub mod stack_vec;
+pub mod time;
 pub mod time_control;
 pub mod transposition_table;
 pub mod uci;

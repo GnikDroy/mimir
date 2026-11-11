@@ -1012,7 +1012,7 @@ mod tests {
             if state.is_checkmate() || state.is_stalemate() {
                 break;
             }
-            let initial_time = std::time::Instant::now();
+            let initial_time = crate::time::Instant::now();
             let result = searcher.search(
                 state,
                 SearchLimits::to_nodes(node_limit),

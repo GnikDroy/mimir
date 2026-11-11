@@ -1,5 +1,3 @@
-use num_enum::UnsafeFromPrimitive;
-
 use crate::types::color::Color;
 use crate::types::file::File;
 use crate::types::rank::Rank;
@@ -11,7 +9,7 @@ use crate::types::rank::Rank;
 /// [`BitBoard`](crate::bitboard::BitBoard) corresponds to `Square::index(n)`.
 #[rustfmt::skip]
 #[repr(u8)]
-#[derive(UnsafeFromPrimitive, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(dead_code)]
 pub enum Square {
     A1, B1, C1, D1, E1, F1, G1, H1,
@@ -38,7 +36,7 @@ impl Square {
     #[inline(always)]
     pub fn index(index: u8) -> Self {
         debug_assert!((index as usize) < Self::NUM);
-        unsafe { Square::unchecked_transmute_from(index) }
+        unsafe { std::mem::transmute::<u8, Square>(index) }
     }
 
     /// Iterator over every square from `A1` to `H8` in discriminant order.

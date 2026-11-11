@@ -1,5 +1,3 @@
-extern crate num_enum;
-
 #[macro_use]
 mod bitboard;
 

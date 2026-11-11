@@ -1,5 +1,3 @@
-use num_enum::UnsafeFromPrimitive;
-
 use crate::types::piece::Piece;
 use crate::types::promotion_piece::PromotionPiece;
 use crate::types::square::Square;
@@ -12,7 +10,7 @@ use crate::stack_vec::StackVec;
 /// - bit 3 ⇒ promotion
 /// - bit 2 ⇒ capture
 /// - low 2 bits of any `Promotion*` discriminant select the promotion piece
-#[derive(Copy, Clone, Eq, PartialEq, Debug, UnsafeFromPrimitive)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
 #[repr(u8)]
 #[rustfmt::skip]
 pub enum MoveType {
@@ -370,7 +368,7 @@ impl MoveMethods for Move {
     fn get_type(&self) -> MoveType {
         // SAFETY: every Move is constructed via `encode`, which writes a
         // valid MoveType discriminant into the kind field.
-        unsafe { MoveType::unchecked_transmute_from(self.type_bits() as u8) }
+        unsafe { std::mem::transmute::<u8, MoveType>(self.type_bits() as u8) }
     }
 
     fn to_uci(&self) -> String {

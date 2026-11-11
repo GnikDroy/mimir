@@ -1,8 +1,6 @@
-use num_enum::UnsafeFromPrimitive;
-
 /// Side to move / piece colour.
 #[repr(u8)]
-#[derive(UnsafeFromPrimitive, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Color {
     White,
     Black,
@@ -22,7 +20,7 @@ impl Color {
     #[inline(always)]
     pub fn index(index: usize) -> Self {
         debug_assert!(index < Self::NUM);
-        unsafe { Color::unchecked_transmute_from(index as u8) }
+        unsafe { std::mem::transmute::<u8, Color>(index as u8) }
     }
 
     /// Iterator over every colour in discriminant order.

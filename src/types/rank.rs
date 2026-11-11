@@ -1,11 +1,9 @@
-use num_enum::UnsafeFromPrimitive;
-
 /// Board rank (row). `First` is white's back rank, `Eighth` is black's.
 ///
 /// Discriminant matches the FEN rank number minus one (`First = 0`,
 /// ..., `Eighth = 7`).
 #[repr(u8)]
-#[derive(UnsafeFromPrimitive, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(dead_code)]
 pub enum Rank {
     First,
@@ -32,7 +30,7 @@ impl Rank {
     #[inline(always)]
     pub fn index(index: usize) -> Self {
         debug_assert!(index < Self::NUM);
-        unsafe { Rank::unchecked_transmute_from(index as u8) }
+        unsafe { std::mem::transmute::<u8, Rank>(index as u8) }
     }
 
     /// Iterator over every rank from `First` to `Eighth`.

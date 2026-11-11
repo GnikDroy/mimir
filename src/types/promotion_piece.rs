@@ -1,11 +1,9 @@
-use num_enum::UnsafeFromPrimitive;
-
 use crate::types::piece::Piece;
 
 /// A piece a pawn may promote to. Listed best-to-worst by typical search
 /// value so move ordering iterates queens first.
 #[repr(u8)]
-#[derive(UnsafeFromPrimitive, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PromotionPiece {
     Queen,
     Rook,
@@ -27,7 +25,7 @@ impl PromotionPiece {
     #[inline(always)]
     pub fn index(index: u8) -> Self {
         debug_assert!(index < Self::NUM);
-        unsafe { PromotionPiece::unchecked_transmute_from(index) }
+        unsafe { std::mem::transmute::<u8, PromotionPiece>(index) }
     }
 
     /// Iterator over every promotion target in discriminant order.

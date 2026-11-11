@@ -1,10 +1,8 @@
-use num_enum::UnsafeFromPrimitive;
-
 /// Board file (column). `A` is the queenside file, `H` is the kingside.
 ///
 /// Discriminant matches the algebraic file letter (`A = 0`, ..., `H = 7`).
 #[repr(u8)]
-#[derive(UnsafeFromPrimitive, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(dead_code)]
 pub enum File {
     A,
@@ -31,7 +29,7 @@ impl File {
     #[inline(always)]
     pub fn index(index: usize) -> Self {
         debug_assert!(index < Self::NUM);
-        unsafe { File::unchecked_transmute_from(index as u8) }
+        unsafe { std::mem::transmute::<u8, File>(index as u8) }
     }
 
     /// Iterator over every file from `A` to `H`.

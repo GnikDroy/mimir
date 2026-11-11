@@ -1,12 +1,10 @@
-use num_enum::UnsafeFromPrimitive;
-
 /// Piece kind, independent of colour.
 ///
 /// Ordering is fixed: `King, Queen, Rook, Bishop, Knight, Pawn`. The
 /// discriminant is the canonical piece index used by bitboards, PSTs, and
 /// the packed [`Move`](crate::core::Move) encoding.
 #[repr(u8)]
-#[derive(UnsafeFromPrimitive, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Piece {
     King,
     Queen,
@@ -30,7 +28,7 @@ impl Piece {
     #[inline(always)]
     pub fn index(index: u8) -> Self {
         debug_assert!(index < Self::NUM as u8);
-        unsafe { Piece::unchecked_transmute_from(index) }
+        unsafe { std::mem::transmute::<u8, Piece>(index) }
     }
 
     /// Iterator over every piece kind in discriminant order.

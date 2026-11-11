@@ -16,6 +16,7 @@ use crate::stack_vec::StackVec;
 use crate::state::GameState;
 use crate::time_control::TimeControl;
 use crate::transposition_table::{TranspositionEntry, TranspositionFlag, TranspositionTable};
+use crate::try_search;
 use crate::uci::options::EngineOptions;
 use crate::zobrist::ZobristHash;
 
@@ -369,7 +370,8 @@ impl Searcher {
         let mut beta = prev_eval + delta;
 
         loop {
-            let (best_move, eval) = self.alpha_beta(state, depth, 0, alpha, beta, true)?;
+            let (best_move, eval) =
+                try_search!(self.alpha_beta(state, depth, 0, alpha, beta, true));
 
             if eval <= alpha {
                 self.analytics.aspiration_fail_low += 1;
@@ -578,7 +580,7 @@ impl Searcher {
                 .alpha_beta(state, null_depth, ply + 1, -beta, -beta + 1, false)
                 .map(|(_, e)| -e);
             state.unmake_null_move(&undo);
-            let null_score = null_status?;
+            let null_score = try_search!(null_status);
 
             if null_score >= beta {
                 self.analytics.null_move_cutoffs += 1;
@@ -650,7 +652,7 @@ impl Searcher {
                     .map(|(_, e)| -e);
                 state.unmake_move(mv, &undo);
                 self.position_history.pop();
-                eval?
+                try_search!(eval)
             } else {
                 self.analytics.pvs_scouts += 1;
                 // A scout taken when beta == alpha + 1 cannot ever
@@ -685,7 +687,7 @@ impl Searcher {
                     .map(|(_, e)| -e);
                 state.unmake_move(mv, &undo);
                 self.position_history.pop();
-                let mut score = scout?;
+                let mut score = try_search!(scout);
 
                 // Stage 2: if LMR was applied and the reduced scout failed
                 // high, verify at full depth (still null window). Reduced
@@ -699,7 +701,7 @@ impl Searcher {
                         .map(|(_, e)| -e);
                     state.unmake_move(mv, &undo);
                     self.position_history.pop();
-                    score = s?;
+                    score = try_search!(s);
                 } else if r > 0 {
                     self.analytics.lmr_successes += 1;
                 }
@@ -715,7 +717,7 @@ impl Searcher {
                         .map(|(_, e)| -e);
                     state.unmake_move(mv, &undo);
                     self.position_history.pop();
-                    score = s?;
+                    score = try_search!(s);
                 }
 
                 score
@@ -939,7 +941,7 @@ impl Searcher {
             let status = self.quiescence(state, ply + 1, -beta, -alpha).map(|e| -e);
             state.unmake_move(mv, &undo);
             self.position_history.pop();
-            let eval = status?;
+            let eval = try_search!(status);
 
             // update alpha.
             // alpha-beta on negamax, unlike minimax doesn't require updating beta.

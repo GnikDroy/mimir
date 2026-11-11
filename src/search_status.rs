@@ -3,10 +3,9 @@
 //! [`SearchStatus`] distinguishes a completed search from two abort
 //! causes: an external `stop` and a time-control deadline.
 //!
-//! The `?` operator is supported via [`Try`] so search internals can
-//! propagate abort reasons without boilerplate.
-use std::convert::Infallible;
-use std::ops::{ControlFlow, FromResidual, Residual, Try};
+//! [`try_search!`] propagates the abort variants, standing in for the
+//! `?` operator: implementing [`Try`](std::ops::Try) for a custom type
+//! is still nightly-only
 
 #[must_use]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -31,39 +30,23 @@ impl<T> SearchStatus<T> {
     }
 }
 
-impl<T> Try for SearchStatus<T> {
-    type Output = T;
-    type Residual = SearchStatus<Infallible>;
-
-    #[inline]
-    fn from_output(output: T) -> Self {
-        SearchStatus::Complete(output)
-    }
-
-    #[inline]
-    fn branch(self) -> ControlFlow<Self::Residual, T> {
-        match self {
-            SearchStatus::Complete(t) => ControlFlow::Continue(t),
-            SearchStatus::Stopped => ControlFlow::Break(SearchStatus::Stopped),
-            SearchStatus::TimedOut => ControlFlow::Break(SearchStatus::TimedOut),
+/// Unwraps a [`SearchStatus`]
+///
+/// What `?` does, spelled out. The enclosing function must
+/// itself return a [`SearchStatus`]
+#[macro_export]
+macro_rules! try_search {
+    ($status:expr) => {
+        match $status {
+            $crate::search_status::SearchStatus::Complete(value) => value,
+            $crate::search_status::SearchStatus::Stopped => {
+                return $crate::search_status::SearchStatus::Stopped;
+            }
+            $crate::search_status::SearchStatus::TimedOut => {
+                return $crate::search_status::SearchStatus::TimedOut;
+            }
         }
-    }
-}
-
-impl<T> FromResidual<SearchStatus<Infallible>> for SearchStatus<T> {
-    #[inline]
-    fn from_residual(residual: SearchStatus<Infallible>) -> Self {
-        match residual {
-            SearchStatus::Stopped => SearchStatus::Stopped,
-            SearchStatus::TimedOut => SearchStatus::TimedOut,
-            // `Infallible` has no inhabitants, `Complete` is unreachable.
-            SearchStatus::Complete(never) => match never {},
-        }
-    }
-}
-
-impl<T> Residual<T> for SearchStatus<Infallible> {
-    type TryType = SearchStatus<T>;
+    };
 }
 
 #[cfg(test)]
@@ -71,12 +54,12 @@ mod tests {
     use super::*;
 
     fn add_one(x: SearchStatus<i32>) -> SearchStatus<i32> {
-        let v = x?;
+        let v = crate::try_search!(x);
         SearchStatus::Complete(v + 1)
     }
 
     #[test]
-    fn test_try_propagates_complete() {
+    fn test_try_search_propagates_complete() {
         assert_eq!(
             add_one(SearchStatus::Complete(41)),
             SearchStatus::Complete(42)
@@ -84,12 +67,12 @@ mod tests {
     }
 
     #[test]
-    fn test_try_propagates_stopped() {
+    fn test_try_search_propagates_stopped() {
         assert_eq!(add_one(SearchStatus::Stopped), SearchStatus::Stopped);
     }
 
     #[test]
-    fn test_try_propagates_timed_out() {
+    fn test_try_search_propagates_timed_out() {
         assert_eq!(add_one(SearchStatus::TimedOut), SearchStatus::TimedOut);
     }
 
